@@ -1,12 +1,18 @@
 """Read and control Zehnder ventilation units through a ComfoConnect PRO."""
 
 from .controls import (
-    BOOST_TIME_24_HOURS,
+    BOOST_TIME_MAX,
     EXTERNAL_SETPOINT_MAX,
     EXTERNAL_SETPOINT_MIN,
     Controls,
 )
-from .device import COMPONENTS, ComfoConnectPro, NoVentilationUnitError
+from .device import (
+    COMPONENTS,
+    READINGS,
+    SETTINGS,
+    ComfoConnectPro,
+    NoVentilationUnitError,
+)
 from .enums import (
     AlarmCode,
     ConnectionState,
@@ -16,15 +22,17 @@ from .enums import (
 )
 from .model import UpdateReport, address
 from .sensors import CO2_ZONES, Sensors
-from .status import ALARM_SLOTS, Status, alarm
+from .status import ALARM_SLOTS, Status
 
 __all__ = [
     "ALARM_SLOTS",
-    "BOOST_TIME_24_HOURS",
+    "BOOST_TIME_MAX",
     "CO2_ZONES",
     "COMPONENTS",
     "EXTERNAL_SETPOINT_MAX",
     "EXTERNAL_SETPOINT_MIN",
+    "READINGS",
+    "SETTINGS",
     "AlarmCode",
     "ComfoConnectPro",
     "ConnectionState",
@@ -37,5 +45,4 @@ __all__ = [
     "UpdateReport",
     "VentilationPreset",
     "address",
-    "alarm",
 ]

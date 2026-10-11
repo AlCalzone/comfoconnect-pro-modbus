@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27,<2"]
 build-backend = "hatchling.build"
 
 [project]
@@ -16,7 +16,7 @@ classifiers = [
     "Topic :: Home Automation",
 ]
 # The caller injects a ModbusUnit; tmodbus is the backend this is exercised against.
-dependencies = ["modbus-connection[tmodbus]>=4.12.1"]
+dependencies = ["modbus-connection[tmodbus]>=4.12.4,<5"]
 
 [project.urls]
 Homepage = "https://github.com/AlCalzone/comfoconnect-pro-modbus"

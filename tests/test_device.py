@@ -23,7 +23,6 @@ from comfoconnect_pro_modbus import (
     TemperatureProfileMode,
     VentilationPreset,
     address,
-    alarm,
 )
 
 from .conftest import HOLDING, INPUT, seed
@@ -91,7 +90,6 @@ async def test_unknown_alarm_codes_stay_numbers(
     await gateway.async_update()
 
     assert gateway.status.active_alarms == (36, AlarmCode.CC_COMP_ERR)
-    assert alarm(36) == 36
 
 
 async def test_alarm_slot_out_of_range(gateway: ComfoConnectPro) -> None:
@@ -136,7 +134,7 @@ async def test_controls(gateway: ComfoConnectPro) -> None:
     assert controls.boost_time == 1800
     assert controls.auto_mode is True
     assert controls.boost is False
-    assert controls.away is False
+    assert controls.away_function is False
     assert controls.comfocool is True
 
 
@@ -224,13 +222,20 @@ async def test_write_boost_time_out_of_range(
 
 
 @pytest.mark.parametrize(
-    ("field", "coil"), [("auto_mode", 5), ("boost", 6), ("away", 7), ("comfocool", 8)]
+    ("helper", "coil"),
+    [
+        ("async_write_auto_mode", 5),
+        ("async_write_boost", 6),
+        ("async_write_away_function", 7),
+        ("async_write_comfocool", 8),
+    ],
 )
 async def test_write_switch(
-    gateway: ComfoConnectPro, writes: list[WriteEvent], field: str, coil: int
+    gateway: ComfoConnectPro, writes: list[WriteEvent], helper: str, coil: int
 ) -> None:
-    await gateway.controls.write(field, True)
-    await gateway.controls.write(field, False)
+    write = getattr(gateway.controls, helper)
+    await write(True)
+    await write(False)
 
     assert writes == [
         WriteEvent("coil", coil, [True], 0x05),
@@ -453,3 +458,74 @@ async def test_a_refused_block_keeps_the_other_components(
 
     assert set(report.failed) == {failed}
     assert report.updated == {"status", "sensors", "controls"} - {failed}
+
+
+async def test_alarm_slots_decode_in_the_field(gateway: ComfoConnectPro) -> None:
+    await gateway.async_update()
+
+    assert gateway.status.active_error_1 is AlarmCode.FILTER_WARNING_FLAG
+    assert gateway.status.active_error_2 == 0
+
+
+async def test_typed_setting_helpers(
+    gateway: ComfoConnectPro, writes: list[WriteEvent]
+) -> None:
+    controls = gateway.controls
+    await controls.async_write_temperature_profile(TemperatureProfile.COLD)
+    await controls.async_write_temperature_profile_mode(TemperatureProfileMode.FIXED)
+    await controls.async_write_external_setpoint(21.5)
+
+    assert writes == [
+        WriteEvent("holding", 1, [1], 0x06),
+        WriteEvent("holding", 2, [1], 0x06),
+        WriteEvent("holding", 3, [215], 0x06),
+    ]
+
+
+async def test_boost_time_through_write(
+    gateway: ComfoConnectPro, writes: list[WriteEvent]
+) -> None:
+    await gateway.controls.write("boost_time", 86400)
+
+    assert writes == [WriteEvent("holding", 4, [65535], 0x06)]
+
+
+async def test_preset_helper_rejects_an_invalid_value(
+    gateway: ComfoConnectPro, writes: list[WriteEvent]
+) -> None:
+    with pytest.raises(ValueError, match="9 is not a VentilationPreset"):
+        await gateway.controls.async_write_ventilation_preset(9)  # type: ignore[arg-type]
+
+    assert writes == []
+
+
+@pytest.mark.parametrize("value", ["warm", True, 1.0])
+async def test_enum_write_rejects_other_types(
+    gateway: ComfoConnectPro, writes: list[WriteEvent], value: object
+) -> None:
+    with pytest.raises(ValueError, match="is not a TemperatureProfile"):
+        await gateway.controls.write("temperature_profile", value)
+
+    assert writes == []
+
+
+async def test_a_timed_out_write_raises(
+    gateway: ComfoConnectPro, mock_modbus_unit: MockModbusUnit
+) -> None:
+    mock_modbus_unit.fail_write(
+        address(0x0007), ModbusTimeoutError(), register_type="coil"
+    )
+    with pytest.raises(ModbusTimeoutError):
+        await gateway.controls.async_write_boost(True)
+
+
+async def test_readings_and_settings_poll_apart(
+    gateway: ComfoConnectPro, mock_modbus_unit: MockModbusUnit
+) -> None:
+    readings = await gateway.async_update_readings()
+    assert readings.updated == {"status", "sensors"}
+    assert gateway.controls.ventilation_preset is None
+
+    settings = await gateway.async_update_settings()
+    assert settings.updated == {"controls"}
+    assert gateway.controls.ventilation_preset is VentilationPreset.MEDIUM

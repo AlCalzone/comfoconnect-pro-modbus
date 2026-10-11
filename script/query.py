@@ -32,16 +32,10 @@ EXAMPLES = """examples:
 def print_gateway(gateway: ComfoConnectPro) -> None:
     """Print each component under its attribute name."""
     print_component(gateway.status, title="status")
-    alarms = ", ".join(
-        code.name if hasattr(code, "name") else str(code)
-        for code in gateway.status.active_alarms
-    )
-    print(f"  active alarms  {alarms or 'none'}")
     print()
     print_component(gateway.sensors, title="sensors")
     print()
     print_component(gateway.controls, title="controls")
-    print(f"  boost_time  {gateway.controls.boost_time} s")
 
 
 async def main() -> int:

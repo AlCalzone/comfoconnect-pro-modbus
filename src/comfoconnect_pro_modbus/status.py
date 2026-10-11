@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from modbus_connection.model import discrete_input, enum, integer
+from modbus_connection.model import NumberField, discrete_input, enum
 
 from .enums import AlarmCode, ConnectionState
 from .model import ComfoConnectComponent, address
@@ -32,12 +32,22 @@ class Status(ComfoConnectComponent):
     register_space = "input"
 
     connection_state = enum(address(0x0001), ConnectionState)
-    active_error_1 = integer(address(0x0002), signed=False)
-    """The first active alarm code, or 0."""
-    active_error_2 = integer(address(0x0003), signed=False)
-    active_error_3 = integer(address(0x0004), signed=False)
-    active_error_4 = integer(address(0x0005), signed=False)
-    active_error_5 = integer(address(0x0006), signed=False)
+    active_error_1: NumberField[AlarmCode | int] = NumberField(
+        address(0x0002), signed=False, convert=alarm
+    )
+    """The first active alarm, or 0."""
+    active_error_2: NumberField[AlarmCode | int] = NumberField(
+        address(0x0003), signed=False, convert=alarm
+    )
+    active_error_3: NumberField[AlarmCode | int] = NumberField(
+        address(0x0004), signed=False, convert=alarm
+    )
+    active_error_4: NumberField[AlarmCode | int] = NumberField(
+        address(0x0005), signed=False, convert=alarm
+    )
+    active_error_5: NumberField[AlarmCode | int] = NumberField(
+        address(0x0006), signed=False, convert=alarm
+    )
 
     error_flag = discrete_input(address(0x0001))
     """At least one alarm is active."""
@@ -56,8 +66,8 @@ class Status(ComfoConnectComponent):
         """Alarm slot ``slot``, from 1 to 5; 0 means no alarm in that slot."""
         if not 1 <= slot <= ALARM_SLOTS:
             raise ValueError(f"no alarm slot {slot}")
-        code: int | None = getattr(self, f"active_error_{slot}")
-        return None if code is None else alarm(code)
+        code: AlarmCode | int | None = getattr(self, f"active_error_{slot}")
+        return code
 
     @property
     def active_alarms(self) -> tuple[AlarmCode | int, ...]:

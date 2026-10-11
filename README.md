@@ -65,7 +65,7 @@ Every value is `None` until the first update. Each update returns an `UpdateRepo
 - **No identity:** the gateway reports no serial number, model or firmware version.
 - **No off switch:** the unit cannot be turned off or put into standby over Modbus.
 - **Temperature profile:** `temperature_profile` applies only in the adaptive and fixed modes. `external_setpoint` applies only in the external setpoint mode.
-- **Boost time:** takes 0 to 65534 seconds, or exactly 86400 for 24 hours. Other values raise `ValueError`.
+- **Boost time:** takes 0 to 65534 seconds, or exactly `BOOST_TIME_MAX` (86400) for 24 hours. Other values raise `ValueError`.
 - **External setpoint:** takes 0 to 40 °C. The manual gives no range, so the library picks this one.
 - **CO₂ zones:** a zone that reads 0 counts as having no sensor.
 - **Testing:** built against the gateway's installation manual, document revision 140. It has not been tested on real hardware yet.
@@ -77,7 +77,9 @@ Every value is `None` until the first update. Each update returns an `UpdateRepo
 The gateway and its ventilation unit, reached through a modbus-connection `ModbusUnit`.
 
 - `await async_detect(unit, *, timeout=None)`: build the device after checking that the gateway reaches a ventilation unit.
-- `await async_update()`: read `status`, `sensors` and `controls`. Returns an `UpdateReport`.
+- `await async_update_readings()`: read `status` and `sensors`. Returns an `UpdateReport`.
+- `await async_update_settings()`: read `controls`. Returns an `UpdateReport`.
+- `await async_update()`: read all three in one `UpdateReport`.
 - `await async_read_raw()`: every register and bit the device reads, undecoded.
 - `status`, `sensors`, `controls`: the components below.
 
@@ -86,7 +88,8 @@ The gateway and its ventilation unit, reached through a modbus-connection `Modbu
 - `connection_state`: a `ConnectionState`. `OK` when the gateway reaches a supported unit.
 - `is_connected`: whether `connection_state` is `OK`.
 - `active_alarms`: the active alarms, as `AlarmCode` members, or plain numbers for codes the manual does not list.
-- `active_error(slot)`: the alarm in slot 1 to 5, or 0 for an empty slot.
+- `active_error_1` to `active_error_5`: the alarm in each slot, as an `AlarmCode` or a plain number, or 0 for an empty slot.
+- `active_error(slot)`: the same, by slot number 1 to 5.
 - `error_flag`: at least one alarm is active.
 - `filter_dirty`: the filters must be replaced.
 - `standby`: the unit is in standby.
@@ -107,15 +110,21 @@ The gateway and its ventilation unit, reached through a modbus-connection `Modbu
 - `auto_mode`: the unit picks the speed itself.
 - `boost`: the boost is running.
 - `boost_time`: how long a boost lasts, in seconds.
-- `away`: the away function is on.
+- `away_function`: the away function is on. It is separate from `VentilationPreset.AWAY`.
 - `comfocool`: ComfoCool may cool.
 - `temperature_profile`: a `TemperatureProfile`.
 - `temperature_profile_mode`: a `TemperatureProfileMode`.
 - `external_setpoint`: the comfort temperature for the external setpoint mode, in °C.
 - `await async_write_ventilation_preset(preset)`: set the fan speed.
-- `await async_write_boost_time(seconds)`: set how long a boost lasts.
+- `await async_write_auto_mode(on)`: turn auto mode on or off.
+- `await async_write_boost(on)`: start or stop a boost.
+- `await async_write_boost_time(seconds)`: set how long a boost lasts, up to `BOOST_TIME_MAX`.
+- `await async_write_away_function(on)`: turn the away function on or off.
+- `await async_write_comfocool(on)`: allow or stop ComfoCool cooling.
+- `await async_write_temperature_profile(profile)`: set the temperature profile.
+- `await async_write_temperature_profile_mode(mode)`: set the temperature profile mode.
+- `await async_write_external_setpoint(celsius)`: set the external setpoint.
 - `await async_reset_errors()`: clear the alarms.
-- `await write(name, value)`: set `auto_mode`, `boost`, `away`, `comfocool`, `temperature_profile`, `temperature_profile_mode` or `external_setpoint`.
 
 ### Enums
 
@@ -128,7 +137,7 @@ The gateway and its ventilation unit, reached through a modbus-connection `Modbu
 ### Errors
 
 - `NoVentilationUnitError`: raised by `async_detect()` when the gateway reports a connection state other than `OK`, or has no path to the unit. Its `state` holds the `ConnectionState`, or `None` if the gateway did not report one.
-- `ValueError`: raised by a write with a value out of range: a boost time the gateway cannot store, an external setpoint outside 0 to 40 °C, or a number that is not a member of the field's enum.
+- `ValueError`: raised by a write with a value out of range: a boost time the gateway cannot store, an external setpoint outside 0 to 40 °C, or a value that is not a member of the field's enum.
 
 The register addresses are in the component modules under [`src/comfoconnect_pro_modbus`](src/comfoconnect_pro_modbus), and in chapter 9.3 of the gateway's installation manual.
 

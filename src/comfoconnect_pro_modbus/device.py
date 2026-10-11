@@ -20,7 +20,9 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
-COMPONENTS = ("status", "sensors", "controls")
+READINGS = ("status", "sensors")
+SETTINGS = ("controls",)
+COMPONENTS = (*READINGS, *SETTINGS)
 
 # The gateway answers with these when it has no path to the ventilation unit.
 GATEWAY_ERRORS = (GatewayPathUnavailableError, GatewayTargetError)
@@ -88,9 +90,20 @@ class ComfoConnectPro(Device):
             raise NoVentilationUnitError(state, unreachable=True) from err
         return device
 
+    async def async_update_readings(self) -> UpdateReport:
+        """Refresh what the unit measures and reports: status and sensors."""
+        return self._logged(await self.async_poll(READINGS))
+
+    async def async_update_settings(self) -> UpdateReport:
+        """Refresh the settings a client can change."""
+        return self._logged(await self.async_poll(SETTINGS))
+
     async def async_update(self) -> UpdateReport:
-        """Refresh the status, the measurements and the settings in one report."""
-        report = await self.async_poll(COMPONENTS)
+        """Refresh readings and settings together in one report."""
+        return self._logged(await self.async_poll(COMPONENTS))
+
+    def _logged(self, report: UpdateReport) -> UpdateReport:
+        """Log each component that failed to refresh, and pass the report on."""
         for name, error in report.failed.items():
             _LOGGER.debug("Component %s failed to refresh: %s", name, error)
         return report
