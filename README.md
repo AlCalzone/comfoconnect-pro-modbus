@@ -41,10 +41,8 @@ ModbusSerialParams(device="/dev/ttyUSB0", baudrate=19200, parity="E", stopbits=1
 
 ## Installation
 
-The library is not on PyPI yet. Install it from git:
-
 ```bash
-pip install "comfoconnect-pro-modbus @ git+https://github.com/AlCalzone/comfoconnect-pro-modbus@main"
+pip install comfoconnect-pro-modbus
 ```
 
 It needs Python 3.12 or later and [modbus-connection](https://github.com/home-assistant-libs/modbus-connection) 4.12.1 or later.
