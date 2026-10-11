@@ -141,3 +141,5 @@ uv run script/query.py /dev/ttyUSB0 --baudrate 19200 --parity E
 ```
 
 Add `--raw` to include the undecoded registers. A bug report about a wrong value needs them.
+
+The `comfoconnect_pro_modbus` logger reports at `DEBUG` the connection state `async_detect()` found and each component that failed to refresh during an update.

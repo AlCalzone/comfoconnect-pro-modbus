@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Self
 
@@ -15,6 +16,8 @@ from .status import Status
 
 if TYPE_CHECKING:
     from modbus_connection import ModbusUnit
+
+_LOGGER = logging.getLogger(__name__)
 
 COMPONENTS = ("status", "sensors", "controls")
 
@@ -52,13 +55,20 @@ class ComfoConnectPro(Device):
         """
         device = cls(unit, timeout=timeout)
         await device.status.async_update(notify=False)
+        state = device.status.connection_state
+        _LOGGER.debug(
+            "Gateway connection state: %s", "unknown" if state is None else state.name
+        )
         if not device.status.is_connected:
-            raise NoVentilationUnitError(device.status.connection_state)
+            raise NoVentilationUnitError(state)
         return device
 
     async def async_update(self) -> UpdateReport:
         """Refresh the status, the measurements and the settings in one report."""
-        return await self.async_poll(COMPONENTS)
+        report = await self.async_poll(COMPONENTS)
+        for name, error in report.failed.items():
+            _LOGGER.debug("Component %s failed to refresh: %s", name, error)
+        return report
 
     async def async_read_raw(self, names: Iterable[str] | None = None) -> Raw:
         """Every register and bit this device reads, undecoded, for diagnostics."""

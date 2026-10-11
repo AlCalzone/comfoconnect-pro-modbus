@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 import pytest
 from modbus_connection import (
     IllegalDataAddressError,
@@ -275,3 +277,27 @@ async def test_read_raw(gateway: ComfoConnectPro) -> None:
     assert raw["discrete"][0] is True
     assert raw["holding"][0] == 2
     assert raw["coil"][8] is True
+
+
+async def test_logs_the_connection_state(
+    mock_modbus_unit: MockModbusUnit, caplog: pytest.LogCaptureFixture
+) -> None:
+    seed(mock_modbus_unit)
+    with caplog.at_level(logging.DEBUG, logger="comfoconnect_pro_modbus"):
+        await ComfoConnectPro.async_detect(mock_modbus_unit)
+
+    assert "Gateway connection state: OK" in caplog.text
+
+
+async def test_logs_failed_components(
+    gateway: ComfoConnectPro,
+    mock_modbus_unit: MockModbusUnit,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    mock_modbus_unit.fail_read(
+        address(0x0006), IllegalDataAddressError(), register_type="coil"
+    )
+    with caplog.at_level(logging.DEBUG, logger="comfoconnect_pro_modbus"):
+        await gateway.async_update()
+
+    assert "Component controls failed to refresh" in caplog.text
