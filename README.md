@@ -66,6 +66,7 @@ Every value is `None` until the first update. Each update returns an `UpdateRepo
 - **No off switch:** the unit cannot be turned off or put into standby over Modbus.
 - **Temperature profile:** `temperature_profile` applies only in the adaptive and fixed modes. `external_setpoint` applies only in the external setpoint mode.
 - **Boost time:** takes 0 to 65534 seconds, or exactly 86400 for 24 hours. Other values raise `ValueError`.
+- **External setpoint:** takes 0 to 40 °C. The manual gives no range, so the library picks this one.
 - **CO₂ zones:** a zone that reads 0 counts as having no sensor.
 - **Testing:** built against the gateway's installation manual, document revision 140. It has not been tested on real hardware yet.
 
@@ -126,8 +127,8 @@ The gateway and its ventilation unit, reached through a modbus-connection `Modbu
 
 ### Errors
 
-- `NoVentilationUnitError`: raised by `async_detect()` when the gateway reports a connection state other than `OK`. Its `state` holds the `ConnectionState`.
-- `ValueError`: raised by `async_write_boost_time()` for a duration the gateway cannot store.
+- `NoVentilationUnitError`: raised by `async_detect()` when the gateway reports a connection state other than `OK`, or has no path to the unit. Its `state` holds the `ConnectionState`, or `None` if the gateway did not report one.
+- `ValueError`: raised by a write with a value out of range: a boost time the gateway cannot store, an external setpoint outside 0 to 40 °C, or a number that is not a member of the field's enum.
 
 The register addresses are in the component modules under [`src/comfoconnect_pro_modbus`](src/comfoconnect_pro_modbus), and in chapter 9.3 of the gateway's installation manual.
 

@@ -18,6 +18,14 @@ def alarm(code: int) -> AlarmCode | int:
         return code
 
 
+class ConnectionStatus(ComfoConnectComponent):
+    """Input register 0x0001 alone, which the gateway serves without a unit."""
+
+    register_space = "input"
+
+    connection_state = enum(address(0x0001), ConnectionState)
+
+
 class Status(ComfoConnectComponent):
     """Input registers 0x0001 to 0x0006 and discrete inputs 0x0001 to 0x0004."""
 
