@@ -3,45 +3,25 @@ name: Publish to PyPI
 on:
   release:
     types: [published]
-  # Run it manually from the release tag.
-  workflow_dispatch:
-
-env:
-  RELEASE_TAG: ${{ github.ref_name }}
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
     steps:
-      - name: Check the tag is a release version
-        run: |
-          if [[ "$GITHUB_REF_TYPE" != "tag" ]]; then
-            echo "::error::Run this workflow from a release tag"
-            exit 1
-          fi
-          if ! [[ "$RELEASE_TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+((a|b|rc)[0-9]+)?$ ]]; then
-            echo "::error::Tag '$RELEASE_TAG' is not a version such as 0.1.0"
-            exit 1
-          fi
-          if [[ "$RELEASE_TAG" == "0.0.0" ]]; then
-            echo "::error::0.0.0 is the placeholder version and cannot be released"
-            exit 1
-          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          # A tag ref only, so a branch with a version-like name cannot be built
-          ref: refs/tags/${{ env.RELEASE_TAG }}
-          fetch-depth: 0
           persist-credentials: false
-      - name: Check the tagged commit is on main
-        run: git merge-base --is-ancestor HEAD origin/main
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           version: "0.11.17"
           enable-cache: false
-      - name: Set package version from release tag
+      - run: uv sync --locked
+      - run: uv run pytest
+      - name: Set the package version from the release tag
         run: |
           uv version --frozen "$RELEASE_TAG"
           test "$(uv version --short)" = "$RELEASE_TAG"
@@ -53,10 +33,8 @@ jobs:
 
   publish:
     needs: build
-    # Publish only from a tag ref. A tag off main still runs its own copy of
-    # this file, so the pypi environment's tag rule must guard the token.
-    if: github.ref_type == 'tag' || github.event_name == 'release'
     runs-on: ubuntu-latest
+    # The pypi environment only accepts version tags and needs an approval
     environment: pypi
     permissions:
       id-token: write

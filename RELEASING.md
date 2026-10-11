@@ -1,24 +1,28 @@
 # Releasing `comfoconnect-pro-modbus`
 
-This document describes how to release a new version of `comfoconnect-pro-modbus` to PyPI.
+Publishing a GitHub release publishes the package to PyPI. Nothing else does.
 
-## Tagging Convention
+## Tags
 
 > [!IMPORTANT]
-> **Release tags must be bare semantic versions without a leading `v`** (e.g. `0.1.5`, `1.0.0`).
-> Do not use `v`-prefixed tags like `v0.1.5`.
+> **Release tags must be bare versions without a leading `v`**, such as `0.1.5` or `1.0.0`.
 
-Release tags are directly substituted into `pyproject.toml` during the release workflow to set the package version according to PEP 440.
+The workflow sets the package version from the tag. The `pypi` environment only accepts tags that match `*.*.*`, so a `v0.1.5` tag cannot publish.
 
-## Release Process
+## Release process
 
-1. **Verify CI**: Ensure that the `CI` workflow is green on the `main` branch.
-2. **Draft a GitHub Release**:
-   - Go to GitHub Releases: **Draft a new release**.
-   - **Choose a tag**: Enter the new version number as a bare tag (e.g. `0.1.5`).
-   - **Target**: `main`.
-   - **Title**: Enter the version number (e.g. `0.1.5`).
-   - **Description**: Provide release notes / changelog.
-3. **Publish the Release**:
-   - Click **Publish release**.
-   - The `.github/workflows/publish.yml` workflow will automatically trigger, build the wheel and source distribution, and publish the package to PyPI via Trusted Publishing.
+1. Check that the `CI` workflow is green on `main`.
+2. On GitHub, go to **Releases** > **Draft a new release**.
+3. Enter the version as a new tag, for example `0.1.5`, with `main` as the target.
+4. Use the version as the title and write the release notes.
+5. Select **Publish release**. This starts the `Publish to PyPI` workflow. It runs the tests, sets the version from the tag and builds the wheel and source distribution.
+6. Open the workflow run in the **Actions** tab. The `publish` job waits for approval in the `pypi` environment. Review it and approve the deployment.
+
+The `publish` job then uploads the package through PyPI trusted publishing.
+
+## PyPI setup
+
+The PyPI project needs a trusted publisher for this repository with:
+
+- **Workflow:** `publish.yml`
+- **Environment:** `pypi`
