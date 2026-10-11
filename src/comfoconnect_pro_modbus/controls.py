@@ -43,6 +43,8 @@ def _boost_seconds(raw: int) -> int:
 
 def _boost_time_register(seconds: int) -> int:
     """A boost duration as the register value that carries it."""
+    if isinstance(seconds, bool) or not isinstance(seconds, int):
+        raise ValueError(f"boost time {seconds!r} is not a whole number of seconds")
     if seconds == BOOST_TIME_MAX:
         return _BOOST_TIME_24_HOURS_RAW
     if not 0 <= seconds < _BOOST_TIME_24_HOURS_RAW:

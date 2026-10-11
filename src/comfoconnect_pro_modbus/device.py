@@ -32,22 +32,36 @@ class NoVentilationUnitError(Exception):
     """The gateway answered, but it does not reach a ventilation unit it serves."""
 
     def __init__(
-        self, state: ConnectionState | None, *, unreachable: bool = False
+        self,
+        state: ConnectionState | None,
+        *,
+        code: int | None = None,
+        unreachable: bool = False,
     ) -> None:
         """Initialize the error.
 
-        Pass ``unreachable`` when the gateway refused a read for lack of a path
-        to the unit.
+        Pass the raw ``code`` for a state the manual does not list, and
+        ``unreachable`` when the gateway refused a read for lack of a path to
+        the unit.
         """
+        if state is not None:
+            code = state.value
         if unreachable:
             message = "the gateway has no path to the ventilation unit"
             if state is not None:
                 message += f" (connection state {state.name})"
+        elif state is not None:
+            message = (
+                f"the gateway's connection state is {state.value} ({state.name}), "
+                "not 0 (OK)"
+            )
+        elif code is not None:
+            message = f"the gateway's connection state is {code} (unknown), not 0 (OK)"
         else:
-            shown = "nothing" if state is None else f"{state.value} ({state.name})"
-            message = f"the gateway's connection state is {shown}, not 0 (OK)"
+            message = "the gateway reported no connection state"
         super().__init__(message)
         self.state = state
+        self.code = code
 
 
 class ComfoConnectPro(Device):
@@ -56,7 +70,10 @@ class ComfoConnectPro(Device):
     def __init__(self, unit: ModbusUnit, *, timeout: float | None = None) -> None:
         """Set up the sub-systems."""
         super().__init__(unit)
-        unit.require_timeout(timeout)
+        # Pass a timeout on only when given, because None withdraws one
+        # another user of the same unit asked for.
+        if timeout is not None:
+            unit.require_timeout(timeout)
 
         self.status = Status(unit)
         self.sensors = Sensors(unit)
@@ -80,10 +97,11 @@ class ComfoConnectPro(Device):
             raise NoVentilationUnitError(None, unreachable=True) from err
         state = link.connection_state
         _LOGGER.debug(
-            "Gateway connection state: %s", "unknown" if state is None else state.name
+            "Gateway connection state: %s",
+            link.code if state is None else state.name,
         )
         if state is not ConnectionState.OK:
-            raise NoVentilationUnitError(state)
+            raise NoVentilationUnitError(state, code=link.code)
         try:
             await device.status.async_update(notify=False)
         except GATEWAY_ERRORS as err:

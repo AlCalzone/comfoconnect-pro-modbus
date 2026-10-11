@@ -136,7 +136,7 @@ The gateway and its ventilation unit, reached through a modbus-connection `Modbu
 
 ### Errors
 
-- `NoVentilationUnitError`: raised by `async_detect()` when the gateway reports a connection state other than `OK`, or has no path to the unit. Its `state` holds the `ConnectionState`, or `None` if the gateway did not report one.
+- `NoVentilationUnitError`: raised by `async_detect()` when the gateway reports a connection state other than `OK`, or has no path to the unit. Its `state` holds the `ConnectionState`, or `None` for a code the manual does not list or no code at all. Its `code` holds the raw number.
 - `ValueError`: raised by a write with a value out of range: a boost time the gateway cannot store, an external setpoint outside 0 to 40 °C, or a value that is not a member of the field's enum.
 
 The register addresses are in the component modules under [`src/comfoconnect_pro_modbus`](src/comfoconnect_pro_modbus), and in chapter 9.3 of the gateway's installation manual.

@@ -64,8 +64,11 @@ async def test_detect_rejects_an_unknown_connection_state(
     mock_modbus_unit: MockModbusUnit,
 ) -> None:
     seed(mock_modbus_unit, input_registers={**INPUT, 0x0001: 7})
-    with pytest.raises(NoVentilationUnitError, match="nothing"):
+    with pytest.raises(NoVentilationUnitError, match=r"7 \(unknown\)") as caught:
         await ComfoConnectPro.async_detect(mock_modbus_unit)
+
+    assert caught.value.state is None
+    assert caught.value.code == 7
 
 
 async def test_status(gateway: ComfoConnectPro) -> None:
@@ -529,3 +532,22 @@ async def test_readings_and_settings_poll_apart(
     settings = await gateway.async_update_settings()
     assert settings.updated == {"controls"}
     assert gateway.controls.ventilation_preset is VentilationPreset.MEDIUM
+
+
+@pytest.mark.parametrize("seconds", [3600.5, 600.0, "600", True])
+async def test_write_boost_time_rejects_non_integers(
+    gateway: ComfoConnectPro, writes: list[WriteEvent], seconds: object
+) -> None:
+    with pytest.raises(ValueError, match="whole number of seconds"):
+        await gateway.controls.write("boost_time", seconds)
+
+    assert writes == []
+
+
+async def test_keeps_a_timeout_another_user_asked_for(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    mock_modbus_unit.require_timeout(3)
+    ComfoConnectPro(mock_modbus_unit)
+
+    assert mock_modbus_unit.required_timeout == 3

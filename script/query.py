@@ -40,9 +40,10 @@ def print_gateway(gateway: ComfoConnectPro) -> None:
 
 async def main() -> int:
     """Read one gateway and print it."""
-    # The backend logs a failed connect at ERROR with its traceback; the
-    # messages below say it in one line.
-    logging.getLogger().addHandler(logging.NullHandler())
+    logging.basicConfig(format="%(levelname)s %(name)s: %(message)s")
+    # Silence tmodbus because it logs a failed connect with its traceback.
+    # The messages below say it in one line.
+    logging.getLogger("tmodbus").setLevel(logging.CRITICAL)
 
     parser = argparse.ArgumentParser(
         description=__doc__,

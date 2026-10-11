@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from modbus_connection.model import NumberField, discrete_input, enum
+from modbus_connection.model import NumberField, discrete_input, enum, integer
 
 from .enums import AlarmCode, ConnectionState
 from .model import ComfoConnectComponent, address
@@ -23,7 +23,16 @@ class ConnectionStatus(ComfoConnectComponent):
 
     register_space = "input"
 
-    connection_state = enum(address(0x0001), ConnectionState)
+    code = integer(address(0x0001), signed=False)
+    """The raw connection state, which may be a code the manual does not list."""
+
+    @property
+    def connection_state(self) -> ConnectionState | None:
+        """The connection state, or ``None`` for an unlisted code."""
+        try:
+            return None if self.code is None else ConnectionState(self.code)
+        except ValueError:
+            return None
 
 
 class Status(ComfoConnectComponent):
