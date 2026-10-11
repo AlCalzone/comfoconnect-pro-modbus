@@ -107,7 +107,9 @@ The holding registers and coils `Controls` reads are also writable:
 controls = gateway.controls
 await controls.async_write_ventilation_preset(VentilationPreset.LOW)
 await controls.write("temperature_profile", TemperatureProfile.WARM)
-await controls.write("temperature_profile_mode", TemperatureProfileMode.EXTERNAL_SETPOINT)
+await controls.write(
+    "temperature_profile_mode", TemperatureProfileMode.EXTERNAL_SETPOINT
+)
 await controls.write("external_setpoint", 22.5)  # °C
 await controls.write("boost", True)
 await controls.async_write_boost_time(1800)  # seconds
