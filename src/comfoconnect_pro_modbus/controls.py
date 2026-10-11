@@ -27,6 +27,8 @@ def _member[E: IntEnum](enum_type: type[E]) -> Callable[[object], E]:
     """A write validator that accepts a member of ``enum_type`` or its number."""
 
     def _validate(value: object) -> E:
+        if isinstance(value, IntEnum) and not isinstance(value, enum_type):
+            raise InvalidValueError(f"{value!r} is not a {enum_type.__name__}")
         if isinstance(value, bool) or not isinstance(value, int):
             raise InvalidValueError(f"{value!r} is not a {enum_type.__name__}")
         try:
@@ -37,13 +39,22 @@ def _member[E: IntEnum](enum_type: type[E]) -> Callable[[object], E]:
     return _validate
 
 
+def _bool(value: object) -> bool:
+    """A write validator that accepts only ``True`` and ``False``."""
+    if not isinstance(value, bool):
+        raise InvalidValueError(f"{value!r} is not a bool")
+    return value
+
+
 def _boost_seconds(raw: int) -> int:
     """The boost duration a register value stands for, in seconds."""
     return BOOST_TIME_MAX if raw == _BOOST_TIME_24_HOURS_RAW else raw
 
 
-def _boost_time_register(seconds: int) -> int:
+def _boost_time_register(seconds: float) -> int:
     """A boost duration as the register value that carries it."""
+    if isinstance(seconds, float) and seconds.is_integer():
+        seconds = int(seconds)
     if isinstance(seconds, bool) or not isinstance(seconds, int):
         raise InvalidValueError(
             f"boost time {seconds!r} is not a whole number of seconds"
@@ -58,18 +69,27 @@ def _boost_time_register(seconds: int) -> int:
     return seconds
 
 
-def _external_setpoint(celsius: float) -> float:
+def _external_setpoint(celsius: object) -> float:
     """Check a setpoint against the range the library allows."""
+    if isinstance(celsius, bool) or not isinstance(celsius, int | float):
+        raise InvalidValueError(f"external setpoint {celsius!r} is not a number")
+    # A NaN fails both comparisons, so it is rejected here too.
     if not EXTERNAL_SETPOINT_MIN <= celsius <= EXTERNAL_SETPOINT_MAX:
         raise InvalidValueError(
             f"external setpoint {celsius} °C is outside "
             f"{EXTERNAL_SETPOINT_MIN}-{EXTERNAL_SETPOINT_MAX}"
         )
-    return celsius
+    return float(celsius)
 
 
 class Controls(ComfoConnectComponent):
-    """Fan speed, temperature profile, boost, away function and ComfoCool."""
+    """Fan speed, temperature profile, boost, away function and ComfoCool.
+
+    Every write sets an absolute value, so retrying one is safe. A
+    ``ModbusTimeoutError`` on a write does not mean the gateway ignored it.
+    The unit changes ``boost``, ``auto_mode`` and ``ventilation_preset`` on
+    its own, for example when a boost ends.
+    """
 
     coil_ranges = ((address(0x0006), address(0x0009)),)
 
@@ -98,10 +118,10 @@ class Controls(ComfoConnectComponent):
     )
     """How long a boost lasts, in seconds."""
 
-    auto_mode = coil(address(0x0006), writable=True)
-    boost = coil(address(0x0007), writable=True)
-    away_function = coil(address(0x0008), writable=True)
-    comfocool = coil(address(0x0009), writable=True)
+    auto_mode = coil(address(0x0006), writable=_bool)
+    boost = coil(address(0x0007), writable=_bool)
+    away_function = coil(address(0x0008), writable=_bool)
+    comfocool = coil(address(0x0009), writable=_bool)
     """Whether the ComfoCool unit may cool."""
 
     async def async_write_ventilation_preset(self, preset: VentilationPreset) -> None:
@@ -124,8 +144,11 @@ class Controls(ComfoConnectComponent):
         """Set the comfort temperature for the external setpoint mode."""
         await self.write("external_setpoint", celsius)
 
-    async def async_write_boost_time(self, seconds: int) -> None:
-        """Set how long a boost lasts: up to 65534 seconds, or exactly one day."""
+    async def async_write_boost_time(self, seconds: float) -> None:
+        """Set how long a boost lasts, in whole seconds.
+
+        Takes up to 65534 seconds, or exactly ``BOOST_TIME_MAX``.
+        """
         await self.write("boost_time", seconds)
 
     async def async_write_auto_mode(self, on: bool) -> None:

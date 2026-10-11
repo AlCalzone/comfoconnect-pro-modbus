@@ -18,33 +18,31 @@ from modbus_connection.cli_helper import (
 )
 
 from comfoconnect_pro_modbus import ComfoConnectPro, NoVentilationUnitError
+from comfoconnect_pro_modbus.device import COMPONENTS
 
 # The gateway speaks Modbus TCP over its network link and Modbus RTU over RS-485.
 CONNECTIONS = (("tcp", None), ("serial", "rtu"))
 
 EXAMPLES = """examples:
   uv run script/query.py 192.168.1.50
-  uv run script/query.py 192.168.1.50 --unit 2 --raw
+  uv run script/query.py 192.168.1.50 --unit 2 --raw --verbose
   uv run script/query.py /dev/ttyUSB0 --baudrate 19200 --parity E
 """
 
 
 def print_gateway(gateway: ComfoConnectPro) -> None:
     """Print each component under its attribute name."""
-    print_component(gateway.status, title="status")
-    print()
-    print_component(gateway.sensors, title="sensors")
-    print()
-    print_component(gateway.controls, title="controls")
+    for index, name in enumerate(COMPONENTS):
+        if index:
+            print()
+        print_component(getattr(gateway, name), title=name)
 
 
 async def main() -> int:
-    """Read one gateway and print it."""
-    logging.basicConfig(format="%(levelname)s %(name)s: %(message)s")
-    # Silence tmodbus because it logs a failed connect with its traceback.
-    # The messages below say it in one line.
-    logging.getLogger("tmodbus").setLevel(logging.CRITICAL)
+    """Read one gateway and print it.
 
+    Exits with 1 when nothing could be read and 2 when some components failed.
+    """
     parser = argparse.ArgumentParser(
         description=__doc__,
         epilog=EXAMPLES,
@@ -55,7 +53,17 @@ async def main() -> int:
     parser.add_argument(
         "--raw", action="store_true", help="also dump every register read, as JSON"
     )
+    parser.add_argument(
+        "--verbose", action="store_true", help="log what the library does"
+    )
     args = parser.parse_args()
+
+    logging.basicConfig(format="%(levelname)s %(name)s: %(message)s")
+    if args.verbose:
+        logging.getLogger("comfoconnect_pro_modbus").setLevel(logging.DEBUG)
+    # Silence tmodbus because it logs a failed connect with its traceback.
+    # The messages below say it in one line.
+    logging.getLogger("tmodbus").setLevel(logging.CRITICAL)
 
     try:
         connection = await connect_from_args(args)
@@ -69,9 +77,21 @@ async def main() -> int:
     try:
         gateway = await ComfoConnectPro.async_detect(counting)
         report = await gateway.async_update()
-        # A raw dump re-reads everything, so count the poll alone.
-        poll_reads = counting.reads
-        raw = await gateway.async_read_raw() if args.raw else None
+        # Count detection and the poll, before the raw dump re-reads everything
+        reads = counting.reads
+
+        print_gateway(gateway)
+        if report.failed:
+            print("\nFailed to read:")
+            for name, error in report.failed.items():
+                print(f"  {name}: {str(error) or type(error).__name__}")
+        print(f"\n{reads} Modbus reads")
+
+        if args.raw:
+            raw = await gateway.async_read_raw()
+            print("\nRaw registers")
+            # The dump arrives address-ordered; sorting keys would undo that.
+            print(json.dumps(raw, indent=2))
     except NoVentilationUnitError as err:
         print(f"No ventilation unit behind the gateway: {err}")
         return 1
@@ -80,18 +100,8 @@ async def main() -> int:
         return 1
     finally:
         await connection.close()
-
-    print_gateway(gateway)
-    if report.failed:
-        print("\nFailed to read:")
-        for name, error in report.failed.items():
-            print(f"  {name}: {str(error) or type(error).__name__}")
-    if raw is not None:
-        print("\nRaw registers")
-        # The dump arrives address-ordered; sorting keys would undo that.
-        print(json.dumps(raw, indent=2))
-    print(f"\n{poll_reads} Modbus reads")
-    return 0
+    return 2 if report.failed else 0
 
 
-raise SystemExit(asyncio.run(main()))
+if __name__ == "__main__":
+    raise SystemExit(asyncio.run(main()))

@@ -3,16 +3,11 @@
 from __future__ import annotations
 
 import pytest
+from modbus_connection.encode import encode_int
 from modbus_connection.mock import MockModbusUnit
 
 from comfoconnect_pro_modbus import ComfoConnectPro
 from comfoconnect_pro_modbus.model import address
-
-
-def signed(value: int) -> int:
-    """A signed 16-bit value as the register word that carries it."""
-    return value & 0xFFFF
-
 
 # Keys are the manual's addresses; ``seed`` shifts them to protocol addresses.
 DISCRETE: dict[int, bool] = {
@@ -32,7 +27,7 @@ INPUT: dict[int, int] = {
     0x0008: 215,  # room 21.5 °C
     0x0009: 218,
     0x000A: 52,
-    0x000B: signed(-35),  # outdoor -3.5 °C
+    0x000B: encode_int(-35, count=1)[0],  # outdoor -3.5 °C
     0x000C: 192,
     0x000D: 48,
     0x000E: 47,

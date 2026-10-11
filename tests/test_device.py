@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Literal
+from typing import Any, Literal
 
 import pytest
 from modbus_connection import (
@@ -12,9 +12,10 @@ from modbus_connection import (
     ModbusConnectionError,
     ModbusTimeoutError,
 )
-from modbus_connection.mock import MockModbusUnit, WriteEvent
+from modbus_connection.mock import MockModbusUnit, ReadEvent, WriteEvent
 
 from comfoconnect_pro_modbus import (
+    DEFAULT_UNIT_ID,
     AlarmCode,
     ComfoConnectPro,
     ComfoConnectProError,
@@ -29,10 +30,29 @@ from comfoconnect_pro_modbus.model import address
 
 from .conftest import HOLDING, INPUT, seed
 
+GATEWAY_ERRORS = [GatewayPathUnavailableError(), GatewayTargetError()]
+
+
+@pytest.fixture
+def writes(mock_modbus_unit: MockModbusUnit) -> list[WriteEvent]:
+    events: list[WriteEvent] = []
+    mock_modbus_unit.on_write(events.append)
+    return events
+
 
 def test_address_counts_from_one() -> None:
     assert address(0x0001) == 0
     assert address(0x001A) == 25
+
+
+def test_default_unit_id() -> None:
+    assert DEFAULT_UNIT_ID == 1
+
+
+def test_library_errors_share_a_base() -> None:
+    assert issubclass(NoVentilationUnitError, ComfoConnectProError)
+    assert issubclass(InvalidValueError, ComfoConnectProError)
+    assert issubclass(InvalidValueError, ValueError)
 
 
 async def test_detect_reads_the_status(mock_modbus_unit: MockModbusUnit) -> None:
@@ -41,6 +61,7 @@ async def test_detect_reads_the_status(mock_modbus_unit: MockModbusUnit) -> None
 
     assert gateway.status.connection_state is ConnectionState.OK
     assert gateway.status.is_connected
+    assert gateway.status.connection_code == 0
     assert mock_modbus_unit.required_timeout == 5
 
 
@@ -50,27 +71,93 @@ async def test_detect_reads_the_status(mock_modbus_unit: MockModbusUnit) -> None
         (30, ConnectionState.NOT_COMFOAIR_Q),
         (40, ConnectionState.INCOMPATIBLE_VERSION),
         (50, ConnectionState.NO_VENTILATION_UNIT),
+        (7, None),
     ],
 )
-async def test_detect_rejects_a_gateway_without_a_unit(
-    mock_modbus_unit: MockModbusUnit, code: int, state: ConnectionState
+async def test_detect_rejects_a_bad_state_after_one_read(
+    mock_modbus_unit: MockModbusUnit, code: int, state: ConnectionState | None
 ) -> None:
     seed(mock_modbus_unit, input_registers={**INPUT, 0x0001: code})
-    with pytest.raises(NoVentilationUnitError, match=state.name) as caught:
-        await ComfoConnectPro.async_detect(mock_modbus_unit)
+    with pytest.raises(NoVentilationUnitError) as caught:
+        await ComfoConnectPro.async_detect(mock_modbus_unit, timeout=5)
 
     assert caught.value.state is state
+    assert caught.value.code == code
+    assert f"connection state is {code} (" in str(caught.value)
+    assert mock_modbus_unit.read_events == [ReadEvent("input", 0, 1)]
+    assert mock_modbus_unit.required_timeout is None
 
 
-async def test_detect_rejects_an_unknown_connection_state(
-    mock_modbus_unit: MockModbusUnit,
+@pytest.mark.parametrize("error", GATEWAY_ERRORS)
+async def test_detect_maps_a_refused_state_read(
+    mock_modbus_unit: MockModbusUnit, error: Exception
 ) -> None:
-    seed(mock_modbus_unit, input_registers={**INPUT, 0x0001: 7})
-    with pytest.raises(NoVentilationUnitError, match=r"7 \(unknown\)") as caught:
+    seed(mock_modbus_unit)
+    mock_modbus_unit.fail_read(address(0x0001), error, register_type="input")
+    with pytest.raises(NoVentilationUnitError, match="has no path") as caught:
         await ComfoConnectPro.async_detect(mock_modbus_unit)
 
     assert caught.value.state is None
-    assert caught.value.code == 7
+
+
+@pytest.mark.parametrize("error", GATEWAY_ERRORS)
+async def test_detect_maps_a_path_lost_after_the_state(
+    mock_modbus_unit: MockModbusUnit, error: Exception
+) -> None:
+    seed(mock_modbus_unit)
+    mock_modbus_unit.fail_read(address(0x0001), error, register_type="discrete")
+    with pytest.raises(NoVentilationUnitError, match="OK, then lost") as caught:
+        await ComfoConnectPro.async_detect(mock_modbus_unit)
+
+    assert caught.value.state is ConnectionState.OK
+
+
+async def test_constructor_asks_for_a_given_timeout(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    ComfoConnectPro(mock_modbus_unit, timeout=4)
+
+    assert mock_modbus_unit.required_timeout == 4
+
+
+async def test_constructor_keeps_a_timeout_another_user_asked_for(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    mock_modbus_unit.require_timeout(3)
+    ComfoConnectPro(mock_modbus_unit)
+
+    assert mock_modbus_unit.required_timeout == 3
+
+
+async def test_logs_the_connection_state(
+    mock_modbus_unit: MockModbusUnit, caplog: pytest.LogCaptureFixture
+) -> None:
+    seed(mock_modbus_unit)
+    with caplog.at_level(logging.DEBUG, logger="comfoconnect_pro_modbus"):
+        await ComfoConnectPro.async_detect(mock_modbus_unit)
+
+    assert "Gateway connection state: OK" in caplog.text
+
+
+async def test_warns_once_per_failing_component(
+    gateway: ComfoConnectPro,
+    mock_modbus_unit: MockModbusUnit,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    error = GatewayPathUnavailableError()
+    mock_modbus_unit.fail_read(address(0x0001), error, register_type="holding")
+    with caplog.at_level(logging.DEBUG, logger="comfoconnect_pro_modbus"):
+        await gateway.async_update()
+        await gateway.async_update()
+        mock_modbus_unit.fail_read(address(0x0001), None, register_type="holding")
+        await gateway.async_update()
+
+    levels = [(r.levelname, r.getMessage().split(":")[0]) for r in caplog.records]
+    assert levels == [
+        ("WARNING", "Component controls failed to refresh"),
+        ("DEBUG", "Component controls still fails to refresh"),
+        ("INFO", "Component controls refreshes again"),
+    ]
 
 
 async def test_status(gateway: ComfoConnectPro) -> None:
@@ -82,9 +169,22 @@ async def test_status(gateway: ComfoConnectPro) -> None:
     assert status.standby is False
     assert status.comfohood is False
     assert status.filter_dirty is False
+    assert status.active_error_1 is AlarmCode.FILTER_WARNING_FLAG
     assert status.active_error(1) is AlarmCode.FILTER_WARNING_FLAG
     assert status.active_error(2) == 0
     assert status.active_alarms == (AlarmCode.FILTER_WARNING_FLAG,)
+
+
+async def test_status_keeps_an_unknown_state_code(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    seed(mock_modbus_unit, input_registers={**INPUT, 0x0001: 7})
+    gateway = ComfoConnectPro(mock_modbus_unit)
+    await gateway.async_update()
+
+    assert gateway.status.connection_state is None
+    assert gateway.status.connection_code == 7
+    assert not gateway.status.is_connected
 
 
 async def test_unknown_alarm_codes_stay_numbers(
@@ -95,11 +195,6 @@ async def test_unknown_alarm_codes_stay_numbers(
     await gateway.async_update()
 
     assert gateway.status.active_alarms == (36, AlarmCode.CC_COMP_ERR)
-
-
-async def test_alarm_slot_out_of_range(gateway: ComfoConnectPro) -> None:
-    with pytest.raises(ValueError, match="no alarm slot 6"):
-        gateway.status.active_error(6)
 
 
 async def test_sensors(gateway: ComfoConnectPro) -> None:
@@ -121,11 +216,6 @@ async def test_sensors(gateway: ComfoConnectPro) -> None:
     assert sensors.co2(1) == 640
     assert sensors.co2(2) == 0
     assert sensors.co2_zones == {1: 640, 3: 812}
-
-
-async def test_co2_zone_out_of_range(gateway: ComfoConnectPro) -> None:
-    with pytest.raises(ValueError, match="no CO2 zone 9"):
-        gateway.sensors.co2(9)
 
 
 async def test_controls(gateway: ComfoConnectPro) -> None:
@@ -151,6 +241,72 @@ async def test_boost_time_of_a_day(mock_modbus_unit: MockModbusUnit) -> None:
     assert gateway.controls.boost_time == 86400
 
 
+async def test_values_before_the_first_update(gateway: ComfoConnectPro) -> None:
+    assert gateway.status.connection_state is None
+    assert gateway.status.active_error(1) is None
+    assert gateway.status.active_alarms == ()
+    assert gateway.controls.boost_time is None
+    assert gateway.sensors.co2(1) is None
+    assert gateway.sensors.co2_zones == {}
+
+
+@pytest.mark.parametrize(
+    ("call", "match"),
+    [
+        (lambda gateway: gateway.status.active_error(0), "no alarm slot 0"),
+        (lambda gateway: gateway.status.active_error(6), "no alarm slot 6"),
+        (lambda gateway: gateway.sensors.co2(0), "no CO2 zone 0"),
+        (lambda gateway: gateway.sensors.co2(9), "no CO2 zone 9"),
+    ],
+)
+async def test_index_out_of_range(
+    gateway: ComfoConnectPro, call: Any, match: str
+) -> None:
+    with pytest.raises(InvalidValueError, match=match):
+        call(gateway)
+
+
+@pytest.mark.parametrize(
+    ("field", "number", "value"),
+    [
+        ("ventilation_preset", 0x0001, 7),
+        ("temperature_profile", 0x0002, 3),
+        ("temperature_profile_mode", 0x0003, 3),
+    ],
+)
+async def test_an_unknown_enum_value_decodes_to_none(
+    mock_modbus_unit: MockModbusUnit,
+    caplog: pytest.LogCaptureFixture,
+    field: str,
+    number: int,
+    value: int,
+) -> None:
+    seed(mock_modbus_unit, holding={**HOLDING, number: value})
+    gateway = ComfoConnectPro(mock_modbus_unit)
+    await gateway.async_update()
+
+    assert getattr(gateway.controls, field) is None
+    assert f"has no mapping for value {value}" in caplog.text
+
+
+async def test_reads_the_protocol_addresses(mock_modbus_unit: MockModbusUnit) -> None:
+    # Use literal protocol addresses so an off-by-one in address() fails here
+    mock_modbus_unit.input[0] = 0
+    mock_modbus_unit.input[6] = 175
+    mock_modbus_unit.input[25] = 23
+    mock_modbus_unit.discrete[3] = True
+    mock_modbus_unit.holding[4] = 900
+    mock_modbus_unit.coil[8] = True
+    gateway = await ComfoConnectPro.async_detect(mock_modbus_unit)
+    await gateway.async_update()
+
+    assert gateway.sensors.airflow == 175
+    assert gateway.sensors.filter_days_remaining == 23
+    assert gateway.status.filter_dirty is True
+    assert gateway.controls.boost_time == 900
+    assert gateway.controls.comfocool is True
+
+
 async def test_poll_reads_each_space_once(
     gateway: ComfoConnectPro, mock_modbus_unit: MockModbusUnit
 ) -> None:
@@ -168,103 +324,39 @@ async def test_poll_reads_each_space_once(
     }
 
 
-@pytest.fixture
-def writes(mock_modbus_unit: MockModbusUnit) -> list[WriteEvent]:
-    events: list[WriteEvent] = []
-    mock_modbus_unit.on_write(events.append)
-    return events
+async def test_readings_and_settings_poll_apart(gateway: ComfoConnectPro) -> None:
+    readings = await gateway.async_update_readings()
+    assert readings.updated == {"status", "sensors"}
+    assert gateway.controls.ventilation_preset is None
 
-
-async def test_write_ventilation_preset(
-    gateway: ComfoConnectPro, writes: list[WriteEvent]
-) -> None:
-    await gateway.controls.async_write_ventilation_preset(VentilationPreset.HIGH)
-
-    assert writes == [WriteEvent("holding", 0, [3], 0x06)]
-
-
-async def test_write_external_setpoint(
-    gateway: ComfoConnectPro, writes: list[WriteEvent]
-) -> None:
-    await gateway.controls.write("external_setpoint", 23.5)
-
-    assert writes == [WriteEvent("holding", 3, [235], 0x06)]
-
-
-async def test_write_profile(
-    gateway: ComfoConnectPro, writes: list[WriteEvent]
-) -> None:
-    await gateway.controls.write("temperature_profile", TemperatureProfile.WARM)
-    await gateway.controls.write(
-        "temperature_profile_mode", TemperatureProfileMode.EXTERNAL_SETPOINT
-    )
-
-    assert writes == [
-        WriteEvent("holding", 1, [2], 0x06),
-        WriteEvent("holding", 2, [2], 0x06),
-    ]
+    settings = await gateway.async_update_settings()
+    assert settings.updated == {"controls"}
+    assert gateway.controls.ventilation_preset is VentilationPreset.MEDIUM
 
 
 @pytest.mark.parametrize(
-    ("seconds", "word"), [(0, 0), (600, 600), (65534, 65534), (86400, 65535)]
-)
-async def test_write_boost_time(
-    gateway: ComfoConnectPro, writes: list[WriteEvent], seconds: int, word: int
-) -> None:
-    await gateway.controls.async_write_boost_time(seconds)
-
-    assert writes == [WriteEvent("holding", 4, [word], 0x06)]
-
-
-@pytest.mark.parametrize("seconds", [-1, 65535, 86399, 86401])
-async def test_write_boost_time_out_of_range(
-    gateway: ComfoConnectPro, writes: list[WriteEvent], seconds: int
-) -> None:
-    with pytest.raises(ValueError, match="boost time"):
-        await gateway.controls.async_write_boost_time(seconds)
-
-    assert writes == []
-
-
-@pytest.mark.parametrize(
-    ("helper", "coil"),
+    ("space", "number", "failed"),
     [
-        ("async_write_auto_mode", 5),
-        ("async_write_boost", 6),
-        ("async_write_away_function", 7),
-        ("async_write_comfocool", 8),
+        ("discrete", 0x0001, "status"),
+        ("input", 0x0007, "sensors"),
+        ("holding", 0x0001, "controls"),
+        ("coil", 0x0006, "controls"),
     ],
 )
-async def test_write_switch(
-    gateway: ComfoConnectPro, writes: list[WriteEvent], helper: str, coil: int
-) -> None:
-    write = getattr(gateway.controls, helper)
-    await write(True)
-    await write(False)
-
-    assert writes == [
-        WriteEvent("coil", coil, [True], 0x05),
-        WriteEvent("coil", coil, [False], 0x05),
-    ]
-
-
-async def test_reset_errors(gateway: ComfoConnectPro, writes: list[WriteEvent]) -> None:
-    await gateway.controls.async_reset_errors()
-
-    assert writes == [WriteEvent("coil", 0, [True], 0x05)]
-
-
-async def test_a_refused_block_keeps_the_rest(
-    gateway: ComfoConnectPro, mock_modbus_unit: MockModbusUnit
+async def test_a_refused_block_keeps_the_other_components(
+    gateway: ComfoConnectPro,
+    mock_modbus_unit: MockModbusUnit,
+    space: Literal["discrete", "input", "holding", "coil"],
+    number: int,
+    failed: str,
 ) -> None:
     mock_modbus_unit.fail_read(
-        address(0x0006), IllegalDataAddressError(), register_type="coil"
+        address(number), IllegalDataAddressError(), register_type=space
     )
     report = await gateway.async_update()
 
-    assert report.updated == {"status", "sensors"}
-    assert set(report.failed) == {"controls"}
-    assert gateway.sensors.airflow == 175
+    assert set(report.failed) == {failed}
+    assert report.updated == {"status", "sensors", "controls"} - {failed}
 
 
 async def test_a_dead_link_raises(
@@ -293,103 +385,47 @@ async def test_read_raw(gateway: ComfoConnectPro) -> None:
     assert raw["coil"][8] is True
 
 
-async def test_logs_the_connection_state(
-    mock_modbus_unit: MockModbusUnit, caplog: pytest.LogCaptureFixture
-) -> None:
-    seed(mock_modbus_unit)
-    with caplog.at_level(logging.DEBUG, logger="comfoconnect_pro_modbus"):
-        await ComfoConnectPro.async_detect(mock_modbus_unit)
-
-    assert "Gateway connection state: OK" in caplog.text
-
-
-async def test_logs_failed_components(
-    gateway: ComfoConnectPro,
-    mock_modbus_unit: MockModbusUnit,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    mock_modbus_unit.fail_read(
-        address(0x0006), IllegalDataAddressError(), register_type="coil"
-    )
-    with caplog.at_level(logging.DEBUG, logger="comfoconnect_pro_modbus"):
-        await gateway.async_update()
-
-    assert "Component controls failed to refresh" in caplog.text
-
-
-@pytest.mark.parametrize("error", [GatewayPathUnavailableError(), GatewayTargetError()])
-async def test_detect_maps_a_gateway_without_a_path(
-    mock_modbus_unit: MockModbusUnit, error: Exception
-) -> None:
-    seed(mock_modbus_unit, input_registers={**INPUT, 0x0001: 50})
-    mock_modbus_unit.fail_read(address(0x0001), error, register_type="discrete")
-    with pytest.raises(NoVentilationUnitError, match="NO_VENTILATION_UNIT"):
-        await ComfoConnectPro.async_detect(mock_modbus_unit)
-
-
-async def test_detect_maps_a_refused_connection_state(
-    mock_modbus_unit: MockModbusUnit,
-) -> None:
-    seed(mock_modbus_unit)
-    mock_modbus_unit.fail_read(
-        address(0x0001), GatewayPathUnavailableError(), register_type="input"
-    )
-    with pytest.raises(NoVentilationUnitError, match="no path") as caught:
-        await ComfoConnectPro.async_detect(mock_modbus_unit)
-
-    assert caught.value.state is None
-
-
-async def test_detect_maps_a_path_lost_after_the_state(
-    mock_modbus_unit: MockModbusUnit,
-) -> None:
-    seed(mock_modbus_unit)
-    mock_modbus_unit.fail_read(
-        address(0x0001), GatewayPathUnavailableError(), register_type="discrete"
-    )
-    with pytest.raises(
-        NoVentilationUnitError, match=r"no path.*\(connection state OK\)"
-    ):
-        await ComfoConnectPro.async_detect(mock_modbus_unit)
-
-
-@pytest.mark.parametrize(("celsius", "word"), [(0.0, 0), (22.1, 221), (40.0, 400)])
-async def test_write_external_setpoint_in_range(
-    gateway: ComfoConnectPro, writes: list[WriteEvent], celsius: float, word: int
-) -> None:
-    await gateway.controls.write("external_setpoint", celsius)
-
-    assert writes == [WriteEvent("holding", 3, [word], 0x06)]
-
-
-@pytest.mark.parametrize("celsius", [-1.0, 40.1, 7000.0])
-async def test_write_external_setpoint_out_of_range(
-    gateway: ComfoConnectPro, writes: list[WriteEvent], celsius: float
-) -> None:
-    with pytest.raises(ValueError, match="external setpoint"):
-        await gateway.controls.write("external_setpoint", celsius)
-
-    assert writes == []
-
-
 @pytest.mark.parametrize(
-    ("field", "value"),
+    ("helper", "value", "event"),
     [
-        ("ventilation_preset", 9),
-        ("temperature_profile", 3),
-        ("temperature_profile_mode", -1),
+        (
+            "async_write_ventilation_preset",
+            VentilationPreset.HIGH,
+            WriteEvent("holding", 0, [3], 0x06),
+        ),
+        (
+            "async_write_temperature_profile",
+            TemperatureProfile.WARM,
+            WriteEvent("holding", 1, [2], 0x06),
+        ),
+        (
+            "async_write_temperature_profile_mode",
+            TemperatureProfileMode.EXTERNAL_SETPOINT,
+            WriteEvent("holding", 2, [2], 0x06),
+        ),
+        ("async_write_external_setpoint", 22.1, WriteEvent("holding", 3, [221], 0x06)),
+        ("async_write_boost_time", 600, WriteEvent("holding", 4, [600], 0x06)),
+        ("async_write_boost_time", 3600.0, WriteEvent("holding", 4, [3600], 0x06)),
+        ("async_write_boost_time", 86400, WriteEvent("holding", 4, [65535], 0x06)),
+        ("async_write_auto_mode", True, WriteEvent("coil", 5, [True], 0x05)),
+        ("async_write_boost", False, WriteEvent("coil", 6, [False], 0x05)),
+        ("async_write_away_function", True, WriteEvent("coil", 7, [True], 0x05)),
+        ("async_write_comfocool", False, WriteEvent("coil", 8, [False], 0x05)),
     ],
 )
-async def test_write_enum_out_of_range(
-    gateway: ComfoConnectPro, writes: list[WriteEvent], field: str, value: int
+async def test_write_helpers(
+    gateway: ComfoConnectPro,
+    writes: list[WriteEvent],
+    helper: str,
+    value: object,
+    event: WriteEvent,
 ) -> None:
-    with pytest.raises(ValueError, match=str(value)):
-        await gateway.controls.write(field, value)
+    await getattr(gateway.controls, helper)(value)
 
-    assert writes == []
+    assert writes == [event]
 
 
-async def test_write_enum_accepts_a_plain_number(
+async def test_write_by_name(
     gateway: ComfoConnectPro, writes: list[WriteEvent]
 ) -> None:
     await gateway.controls.write("ventilation_preset", 1)
@@ -397,22 +433,54 @@ async def test_write_enum_accepts_a_plain_number(
     assert writes == [WriteEvent("holding", 0, [1], 0x06)]
 
 
-async def test_reads_the_protocol_addresses(mock_modbus_unit: MockModbusUnit) -> None:
-    # Use literal protocol addresses so an off-by-one in address() fails here
-    mock_modbus_unit.input[0] = 0
-    mock_modbus_unit.input[6] = 175
-    mock_modbus_unit.input[25] = 23
-    mock_modbus_unit.discrete[3] = True
-    mock_modbus_unit.holding[4] = 900
-    mock_modbus_unit.coil[8] = True
-    gateway = await ComfoConnectPro.async_detect(mock_modbus_unit)
-    await gateway.async_update()
+async def test_reset_errors(gateway: ComfoConnectPro, writes: list[WriteEvent]) -> None:
+    await gateway.controls.async_reset_errors()
 
-    assert gateway.sensors.airflow == 175
-    assert gateway.sensors.filter_days_remaining == 23
-    assert gateway.status.filter_dirty is True
-    assert gateway.controls.boost_time == 900
-    assert gateway.controls.comfocool is True
+    assert writes == [WriteEvent("coil", 0, [True], 0x05)]
+
+
+@pytest.mark.parametrize(
+    ("helper", "value"),
+    [
+        *(
+            ("async_write_boost_time", seconds)
+            for seconds in (-1, 65535, 86399, 86401, 3600.5, "600", True)
+        ),
+        *(
+            ("async_write_external_setpoint", celsius)
+            for celsius in (-0.01, 40.01, float("nan"), 7000.0, True, "20")
+        ),
+        *(
+            ("async_write_ventilation_preset", value)
+            for value in (4, -1, "high", True, 1.0, TemperatureProfile.COLD)
+        ),
+        *(
+            ("async_write_temperature_profile", value)
+            for value in (3, "warm", True, TemperatureProfileMode.EXTERNAL_SETPOINT)
+        ),
+        *(
+            ("async_write_temperature_profile_mode", value)
+            for value in (3, "fixed", False, VentilationPreset.LOW)
+        ),
+        *(
+            (helper, value)
+            for helper in (
+                "async_write_auto_mode",
+                "async_write_boost",
+                "async_write_away_function",
+                "async_write_comfocool",
+            )
+            for value in ("off", 2, 1, None)
+        ),
+    ],
+)
+async def test_write_rejects_an_invalid_value(
+    gateway: ComfoConnectPro, writes: list[WriteEvent], helper: str, value: object
+) -> None:
+    with pytest.raises(InvalidValueError):
+        await getattr(gateway.controls, helper)(value)
+
+    assert writes == []
 
 
 async def test_a_refused_write_raises(
@@ -423,97 +491,6 @@ async def test_a_refused_write_raises(
         await gateway.controls.async_write_ventilation_preset(VentilationPreset.LOW)
 
 
-async def test_an_unknown_preset_decodes_to_none(
-    mock_modbus_unit: MockModbusUnit, caplog: pytest.LogCaptureFixture
-) -> None:
-    seed(mock_modbus_unit, holding={**HOLDING, 0x0001: 7})
-    gateway = ComfoConnectPro(mock_modbus_unit)
-    await gateway.async_update()
-
-    assert gateway.controls.ventilation_preset is None
-    assert "has no mapping for value 7" in caplog.text
-
-
-async def test_values_before_the_first_update(gateway: ComfoConnectPro) -> None:
-    assert gateway.controls.boost_time is None
-    assert gateway.sensors.co2(1) is None
-    assert gateway.sensors.co2_zones == {}
-    assert gateway.status.active_alarms == ()
-
-
-@pytest.mark.parametrize(
-    ("space", "number", "failed"),
-    [
-        ("discrete", 0x0001, "status"),
-        ("input", 0x0007, "sensors"),
-        ("holding", 0x0001, "controls"),
-    ],
-)
-async def test_a_refused_block_keeps_the_other_components(
-    gateway: ComfoConnectPro,
-    mock_modbus_unit: MockModbusUnit,
-    space: Literal["discrete", "input", "holding"],
-    number: int,
-    failed: str,
-) -> None:
-    mock_modbus_unit.fail_read(
-        address(number), IllegalDataAddressError(), register_type=space
-    )
-    report = await gateway.async_update()
-
-    assert set(report.failed) == {failed}
-    assert report.updated == {"status", "sensors", "controls"} - {failed}
-
-
-async def test_alarm_slots_decode_in_the_field(gateway: ComfoConnectPro) -> None:
-    await gateway.async_update()
-
-    assert gateway.status.active_error_1 is AlarmCode.FILTER_WARNING_FLAG
-    assert gateway.status.active_error_2 == 0
-
-
-async def test_typed_setting_helpers(
-    gateway: ComfoConnectPro, writes: list[WriteEvent]
-) -> None:
-    controls = gateway.controls
-    await controls.async_write_temperature_profile(TemperatureProfile.COLD)
-    await controls.async_write_temperature_profile_mode(TemperatureProfileMode.FIXED)
-    await controls.async_write_external_setpoint(21.5)
-
-    assert writes == [
-        WriteEvent("holding", 1, [1], 0x06),
-        WriteEvent("holding", 2, [1], 0x06),
-        WriteEvent("holding", 3, [215], 0x06),
-    ]
-
-
-async def test_boost_time_through_write(
-    gateway: ComfoConnectPro, writes: list[WriteEvent]
-) -> None:
-    await gateway.controls.write("boost_time", 86400)
-
-    assert writes == [WriteEvent("holding", 4, [65535], 0x06)]
-
-
-async def test_preset_helper_rejects_an_invalid_value(
-    gateway: ComfoConnectPro, writes: list[WriteEvent]
-) -> None:
-    with pytest.raises(ValueError, match="9 is not a VentilationPreset"):
-        await gateway.controls.async_write_ventilation_preset(9)  # type: ignore[arg-type]
-
-    assert writes == []
-
-
-@pytest.mark.parametrize("value", ["warm", True, 1.0])
-async def test_enum_write_rejects_other_types(
-    gateway: ComfoConnectPro, writes: list[WriteEvent], value: object
-) -> None:
-    with pytest.raises(ValueError, match="is not a TemperatureProfile"):
-        await gateway.controls.write("temperature_profile", value)
-
-    assert writes == []
-
-
 async def test_a_timed_out_write_raises(
     gateway: ComfoConnectPro, mock_modbus_unit: MockModbusUnit
 ) -> None:
@@ -522,40 +499,3 @@ async def test_a_timed_out_write_raises(
     )
     with pytest.raises(ModbusTimeoutError):
         await gateway.controls.async_write_boost(True)
-
-
-async def test_readings_and_settings_poll_apart(
-    gateway: ComfoConnectPro, mock_modbus_unit: MockModbusUnit
-) -> None:
-    readings = await gateway.async_update_readings()
-    assert readings.updated == {"status", "sensors"}
-    assert gateway.controls.ventilation_preset is None
-
-    settings = await gateway.async_update_settings()
-    assert settings.updated == {"controls"}
-    assert gateway.controls.ventilation_preset is VentilationPreset.MEDIUM
-
-
-@pytest.mark.parametrize("seconds", [3600.5, 600.0, "600", True])
-async def test_write_boost_time_rejects_non_integers(
-    gateway: ComfoConnectPro, writes: list[WriteEvent], seconds: object
-) -> None:
-    with pytest.raises(ValueError, match="whole number of seconds"):
-        await gateway.controls.write("boost_time", seconds)
-
-    assert writes == []
-
-
-async def test_keeps_a_timeout_another_user_asked_for(
-    mock_modbus_unit: MockModbusUnit,
-) -> None:
-    mock_modbus_unit.require_timeout(3)
-    ComfoConnectPro(mock_modbus_unit)
-
-    assert mock_modbus_unit.required_timeout == 3
-
-
-def test_library_errors_share_a_base() -> None:
-    assert issubclass(NoVentilationUnitError, ComfoConnectProError)
-    assert issubclass(InvalidValueError, ComfoConnectProError)
-    assert issubclass(InvalidValueError, ValueError)

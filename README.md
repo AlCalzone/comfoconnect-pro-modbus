@@ -14,7 +14,7 @@ It needs Python 3.12 or later and [modbus-connection](https://github.com/home-as
 
 - **Protocol:** select Modbus TCP or Modbus RTU on the gateway's Protocols and services page. The default is none.
 - **Connection:** Modbus TCP uses port 502. For Modbus RTU, the baud rate and parity must match the gateway. The default parity is even with 1 stop bit. With no parity, the gateway uses 2 stop bits.
-- **Unit ID:** 1 by default, settable from 1 to 247 on the gateway.
+- **Unit ID:** `DEFAULT_UNIT_ID` (1) by default, settable from 1 to 247 on the gateway.
 - **Firmware:** the ventilation unit's firmware must be compatible with the gateway. Otherwise `async_detect()` raises `NoVentilationUnitError` with `INCOMPATIBLE_VERSION`.
 - **Supported devices:** the ComfoConnect PRO (product number 30006323) with a ComfoAir Q or Flex on ComfoNet. With any other unit, or none, `async_detect()` raises `NoVentilationUnitError`.
 - **Network:** for Modbus RTU, wire the gateway's terminals A and B to the RS-485 adapter.
@@ -65,9 +65,12 @@ Every value is `None` until the first update. Each update returns an `UpdateRepo
 - **No identity:** the gateway reports no serial number, model or firmware version.
 - **No off switch:** the unit cannot be turned off or put into standby over Modbus.
 - **Temperature profile:** `temperature_profile` applies only in the adaptive and fixed modes. `external_setpoint` applies only in the external setpoint mode.
-- **Boost time:** takes 0 to 65534 seconds, or exactly `BOOST_TIME_MAX` (86400) for 24 hours. Other values raise `InvalidValueError`.
+- **Boost time:** takes whole seconds from 0 to 65534, or exactly `BOOST_TIME_MAX` (86400) for 24 hours. Other values raise `InvalidValueError`.
 - **External setpoint:** takes 0 to 40 °C. The manual gives no range, so the library picks this one.
 - **CO₂ zones:** a zone that reads 0 counts as having no sensor.
+- **Unit-side changes:** the unit changes `boost`, `auto_mode` and `ventilation_preset` itself, for example when a boost ends. Poll `async_update_settings()` as often as the readings if you show them.
+- **Write retries:** every write sets an absolute value, so retrying one is safe. A `ModbusTimeoutError` on a write does not mean the gateway ignored it.
+- **Stalled link:** a poll can take several request timeouts before it raises.
 - **Testing:** built against the gateway's installation manual, document revision 140. It has not been tested on real hardware yet.
 
 ## API
@@ -85,7 +88,8 @@ The gateway and its ventilation unit, reached through a modbus-connection `Modbu
 
 ### `status` (`Status`)
 
-- `connection_state`: a `ConnectionState`. `OK` when the gateway reaches a supported unit.
+- `connection_state`: a `ConnectionState`. `OK` when the gateway reaches a supported unit. `None` for a code the manual does not list.
+- `connection_code`: the raw connection state number.
 - `is_connected`: whether `connection_state` is `OK`.
 - `active_alarms`: the active alarms, as `AlarmCode` members, or plain numbers for codes the manual does not list.
 - `active_error_1` to `active_error_5`: the alarm in each slot, as an `AlarmCode` or a plain number, or 0 for an empty slot.
@@ -139,9 +143,9 @@ The gateway and its ventilation unit, reached through a modbus-connection `Modbu
 All errors the library raises itself derive from `ComfoConnectProError`. Transport and device errors come from modbus-connection.
 
 - `NoVentilationUnitError`: raised by `async_detect()` when the gateway reports a connection state other than `OK`, or has no path to the unit. Its `state` holds the `ConnectionState`, or `None` for a code the manual does not list or no code at all. Its `code` holds the raw number.
-- `InvalidValueError`: raised by a write before anything is sent, for a value out of range: a boost time the gateway cannot store, an external setpoint outside 0 to 40 °C, or a value that is not a member of the field's enum. It is also a `ValueError`.
+- `InvalidValueError`: raised by a write before anything is sent, for a value the gateway cannot take: a boost time it cannot store, an external setpoint outside 0 to 40 °C, a value that is not a member of the field's enum, or a switch value that is not a `bool`. `active_error()` and `co2()` raise it for a slot or zone out of range. It is also a `ValueError`.
 - `ModbusConnectionError` (modbus-connection): the link to the gateway is lost.
-- `ModbusTimeoutError` (modbus-connection): the gateway did not answer in time.
+- `ModbusTimeoutError` (modbus-connection): the gateway did not answer in time. An update raises it when the first component it reads times out. A later timeout lands in `report.failed`.
 - `ModbusExceptionError` (modbus-connection): the gateway refused a read or a write. A refused read during an update lands in `report.failed`.
 
 The register addresses are in the component modules under [`src/comfoconnect_pro_modbus`](src/comfoconnect_pro_modbus), and in chapter 9.3 of the gateway's installation manual.

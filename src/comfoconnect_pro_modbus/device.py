@@ -11,7 +11,7 @@ from modbus_connection.model import Device, Raw
 
 from .controls import Controls
 from .enums import ConnectionState
-from .errors import ComfoConnectProError
+from .errors import NoVentilationUnitError
 from .model import UpdateReport
 from .sensors import Sensors
 from .status import ConnectionStatus, Status
@@ -21,48 +21,15 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
+DEFAULT_UNIT_ID = 1
+"""The unit ID the gateway answers on unless it is set otherwise."""
+
 READINGS = ("status", "sensors")
 SETTINGS = ("controls",)
 COMPONENTS = (*READINGS, *SETTINGS)
 
 # The gateway answers with these when it has no path to the ventilation unit.
 GATEWAY_ERRORS = (GatewayPathUnavailableError, GatewayTargetError)
-
-
-class NoVentilationUnitError(ComfoConnectProError):
-    """The gateway answered, but it does not reach a ventilation unit it serves."""
-
-    def __init__(
-        self,
-        state: ConnectionState | None,
-        *,
-        code: int | None = None,
-        unreachable: bool = False,
-    ) -> None:
-        """Initialize the error.
-
-        Pass the raw ``code`` for a state the manual does not list, and
-        ``unreachable`` when the gateway refused a read for lack of a path to
-        the unit.
-        """
-        if state is not None:
-            code = state.value
-        if unreachable:
-            message = "the gateway has no path to the ventilation unit"
-            if state is not None:
-                message += f" (connection state {state.name})"
-        elif state is not None:
-            message = (
-                f"the gateway's connection state is {state.value} ({state.name}), "
-                "not 0 (OK)"
-            )
-        elif code is not None:
-            message = f"the gateway's connection state is {code} (unknown), not 0 (OK)"
-        else:
-            message = "the gateway reported no connection state"
-        super().__init__(message)
-        self.state = state
-        self.code = code
 
 
 class ComfoConnectPro(Device):
@@ -79,6 +46,8 @@ class ComfoConnectPro(Device):
         self.status = Status(unit)
         self.sensors = Sensors(unit)
         self.controls = Controls(unit)
+        # The components whose last refresh failed, so each failure warns once.
+        self._failing: set[str] = set()
 
     @classmethod
     async def async_detect(
@@ -89,7 +58,6 @@ class ComfoConnectPro(Device):
         Raises ``NoVentilationUnitError`` when the gateway reports a connection
         state other than OK, or refuses a read for lack of a path to the unit.
         """
-        device = cls(unit, timeout=timeout)
         link = ConnectionStatus(unit)
         try:
             await link.async_update(notify=False)
@@ -99,10 +67,13 @@ class ComfoConnectPro(Device):
         state = link.connection_state
         _LOGGER.debug(
             "Gateway connection state: %s",
-            link.code if state is None else state.name,
+            link.connection_code if state is None else state.name,
         )
         if state is not ConnectionState.OK:
-            raise NoVentilationUnitError(state, code=link.code)
+            raise NoVentilationUnitError(state, code=link.connection_code)
+        # Build the device only now, because it asks the shared unit for the
+        # timeout.
+        device = cls(unit, timeout=timeout)
         try:
             await device.status.async_update(notify=False)
         except GATEWAY_ERRORS as err:
@@ -110,21 +81,38 @@ class ComfoConnectPro(Device):
         return device
 
     async def async_update_readings(self) -> UpdateReport:
-        """Refresh what the unit measures and reports: status and sensors."""
-        return self._logged(await self.async_poll(READINGS))
+        """Refresh what the unit measures and reports: status and sensors.
+
+        Raises ``ModbusTimeoutError`` when the first component times out. A
+        stalled link can hold a poll for several request timeouts.
+        """
+        return self._log_failures(await self.async_poll(READINGS))
 
     async def async_update_settings(self) -> UpdateReport:
-        """Refresh the settings a client can change."""
-        return self._logged(await self.async_poll(SETTINGS))
+        """Refresh the settings a client can change.
+
+        Raises ``ModbusTimeoutError`` when the first component times out.
+        """
+        return self._log_failures(await self.async_poll(SETTINGS))
 
     async def async_update(self) -> UpdateReport:
-        """Refresh readings and settings together in one report."""
-        return self._logged(await self.async_poll(COMPONENTS))
+        """Refresh readings and settings together in one report.
 
-    def _logged(self, report: UpdateReport) -> UpdateReport:
-        """Log each component that failed to refresh, and pass the report on."""
+        Raises ``ModbusTimeoutError`` when the first component times out. A
+        stalled link can hold a poll for several request timeouts.
+        """
+        return self._log_failures(await self.async_poll(COMPONENTS))
+
+    def _log_failures(self, report: UpdateReport) -> UpdateReport:
+        """Warn on a component's first failure and note when it recovers."""
         for name, error in report.failed.items():
-            _LOGGER.debug("Component %s failed to refresh: %s", name, error)
+            if name in self._failing:
+                _LOGGER.debug("Component %s still fails to refresh: %s", name, error)
+            else:
+                _LOGGER.warning("Component %s failed to refresh: %s", name, error)
+        for name in self._failing & report.updated:
+            _LOGGER.info("Component %s refreshes again", name)
+        self._failing = (self._failing - report.updated) | set(report.failed)
         return report
 
     async def async_read_raw(self, names: Iterable[str] | None = None) -> Raw:

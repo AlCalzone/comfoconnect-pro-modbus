@@ -41,7 +41,8 @@
       "matchPackageNames": [
         "modbus-connection"
       ],
-      "groupName": "Core Protocol Dependencies"
+      "groupName": "Core Protocol Dependencies",
+      "minimumReleaseAge": "3 days"
     }
   ]
 }
