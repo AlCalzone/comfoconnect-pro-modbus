@@ -17,13 +17,15 @@ from modbus_connection.mock import MockModbusUnit, WriteEvent
 from comfoconnect_pro_modbus import (
     AlarmCode,
     ComfoConnectPro,
+    ComfoConnectProError,
     ConnectionState,
+    InvalidValueError,
     NoVentilationUnitError,
     TemperatureProfile,
     TemperatureProfileMode,
     VentilationPreset,
-    address,
 )
+from comfoconnect_pro_modbus.model import address
 
 from .conftest import HOLDING, INPUT, seed
 
@@ -551,3 +553,9 @@ async def test_keeps_a_timeout_another_user_asked_for(
     ComfoConnectPro(mock_modbus_unit)
 
     assert mock_modbus_unit.required_timeout == 3
+
+
+def test_library_errors_share_a_base() -> None:
+    assert issubclass(NoVentilationUnitError, ComfoConnectProError)
+    assert issubclass(InvalidValueError, ComfoConnectProError)
+    assert issubclass(InvalidValueError, ValueError)

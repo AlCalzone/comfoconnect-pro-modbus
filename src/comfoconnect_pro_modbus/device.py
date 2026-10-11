@@ -11,6 +11,7 @@ from modbus_connection.model import Device, Raw
 
 from .controls import Controls
 from .enums import ConnectionState
+from .errors import ComfoConnectProError
 from .model import UpdateReport
 from .sensors import Sensors
 from .status import ConnectionStatus, Status
@@ -28,7 +29,7 @@ COMPONENTS = (*READINGS, *SETTINGS)
 GATEWAY_ERRORS = (GatewayPathUnavailableError, GatewayTargetError)
 
 
-class NoVentilationUnitError(Exception):
+class NoVentilationUnitError(ComfoConnectProError):
     """The gateway answered, but it does not reach a ventilation unit it serves."""
 
     def __init__(

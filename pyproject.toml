@@ -15,14 +15,16 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Topic :: Home Automation",
 ]
-# The caller injects a ModbusUnit; tmodbus is the backend this is exercised against.
-dependencies = ["modbus-connection[tmodbus]>=4.12.4,<5"]
+# The caller injects a ModbusUnit, so the library needs no backend of its own.
+dependencies = ["modbus-connection>=4.12.4,<5"]
 
 [project.urls]
 Homepage = "https://github.com/AlCalzone/comfoconnect-pro-modbus"
 
 [dependency-groups]
 dev = [
+    # The backend script/query.py connects through.
+    "modbus-connection[tmodbus]>=4.12.4,<5",
     "mypy>=1.11",
     "pytest>=8",
     "pytest-asyncio>=0.24",

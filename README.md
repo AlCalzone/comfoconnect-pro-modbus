@@ -5,10 +5,10 @@ Read and control Zehnder ComfoAir Q and Flex ventilation units through the Comfo
 ## Installation
 
 ```bash
-pip install comfoconnect-pro-modbus
+pip install comfoconnect-pro-modbus "modbus-connection[tmodbus]"
 ```
 
-It needs Python 3.12 or later and [modbus-connection](https://github.com/home-assistant-libs/modbus-connection) 4.12.1 or later.
+It needs Python 3.12 or later and [modbus-connection](https://github.com/home-assistant-libs/modbus-connection) 4.12.4 or later. The examples use its tmodbus backend, which `modbus-connection[tmodbus]` installs.
 
 ## Device setup
 
@@ -65,7 +65,7 @@ Every value is `None` until the first update. Each update returns an `UpdateRepo
 - **No identity:** the gateway reports no serial number, model or firmware version.
 - **No off switch:** the unit cannot be turned off or put into standby over Modbus.
 - **Temperature profile:** `temperature_profile` applies only in the adaptive and fixed modes. `external_setpoint` applies only in the external setpoint mode.
-- **Boost time:** takes 0 to 65534 seconds, or exactly `BOOST_TIME_MAX` (86400) for 24 hours. Other values raise `ValueError`.
+- **Boost time:** takes 0 to 65534 seconds, or exactly `BOOST_TIME_MAX` (86400) for 24 hours. Other values raise `InvalidValueError`.
 - **External setpoint:** takes 0 to 40 °C. The manual gives no range, so the library picks this one.
 - **CO₂ zones:** a zone that reads 0 counts as having no sensor.
 - **Testing:** built against the gateway's installation manual, document revision 140. It has not been tested on real hardware yet.
@@ -136,8 +136,13 @@ The gateway and its ventilation unit, reached through a modbus-connection `Modbu
 
 ### Errors
 
+All errors the library raises itself derive from `ComfoConnectProError`. Transport and device errors come from modbus-connection.
+
 - `NoVentilationUnitError`: raised by `async_detect()` when the gateway reports a connection state other than `OK`, or has no path to the unit. Its `state` holds the `ConnectionState`, or `None` for a code the manual does not list or no code at all. Its `code` holds the raw number.
-- `ValueError`: raised by a write with a value out of range: a boost time the gateway cannot store, an external setpoint outside 0 to 40 °C, or a value that is not a member of the field's enum.
+- `InvalidValueError`: raised by a write before anything is sent, for a value out of range: a boost time the gateway cannot store, an external setpoint outside 0 to 40 °C, or a value that is not a member of the field's enum. It is also a `ValueError`.
+- `ModbusConnectionError` (modbus-connection): the link to the gateway is lost.
+- `ModbusTimeoutError` (modbus-connection): the gateway did not answer in time.
+- `ModbusExceptionError` (modbus-connection): the gateway refused a read or a write. A refused read during an update lands in `report.failed`.
 
 The register addresses are in the component modules under [`src/comfoconnect_pro_modbus`](src/comfoconnect_pro_modbus), and in chapter 9.3 of the gateway's installation manual.
 

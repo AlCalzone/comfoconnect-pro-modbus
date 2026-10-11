@@ -5,6 +5,7 @@ from __future__ import annotations
 from modbus_connection.model import NumberField, discrete_input, enum, integer
 
 from .enums import AlarmCode, ConnectionState
+from .errors import InvalidValueError
 from .model import ComfoConnectComponent, address
 
 ALARM_SLOTS = 5
@@ -74,7 +75,7 @@ class Status(ComfoConnectComponent):
     def active_error(self, slot: int) -> AlarmCode | int | None:
         """Alarm slot ``slot``, from 1 to 5; 0 means no alarm in that slot."""
         if not 1 <= slot <= ALARM_SLOTS:
-            raise ValueError(f"no alarm slot {slot}")
+            raise InvalidValueError(f"no alarm slot {slot}")
         code: AlarmCode | int | None = getattr(self, f"active_error_{slot}")
         return code
 

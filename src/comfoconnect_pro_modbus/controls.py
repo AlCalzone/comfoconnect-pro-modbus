@@ -12,6 +12,7 @@ from enum import IntEnum
 from modbus_connection.model import NumberField, coil, enum, gauge
 
 from .enums import TemperatureProfile, TemperatureProfileMode, VentilationPreset
+from .errors import InvalidValueError
 from .model import ComfoConnectComponent, address
 
 BOOST_TIME_MAX = 86400
@@ -27,11 +28,11 @@ def _member[E: IntEnum](enum_type: type[E]) -> Callable[[object], E]:
 
     def _validate(value: object) -> E:
         if isinstance(value, bool) or not isinstance(value, int):
-            raise ValueError(f"{value!r} is not a {enum_type.__name__}")
+            raise InvalidValueError(f"{value!r} is not a {enum_type.__name__}")
         try:
             return enum_type(value)
         except ValueError:
-            raise ValueError(f"{value} is not a {enum_type.__name__}") from None
+            raise InvalidValueError(f"{value} is not a {enum_type.__name__}") from None
 
     return _validate
 
@@ -44,11 +45,13 @@ def _boost_seconds(raw: int) -> int:
 def _boost_time_register(seconds: int) -> int:
     """A boost duration as the register value that carries it."""
     if isinstance(seconds, bool) or not isinstance(seconds, int):
-        raise ValueError(f"boost time {seconds!r} is not a whole number of seconds")
+        raise InvalidValueError(
+            f"boost time {seconds!r} is not a whole number of seconds"
+        )
     if seconds == BOOST_TIME_MAX:
         return _BOOST_TIME_24_HOURS_RAW
     if not 0 <= seconds < _BOOST_TIME_24_HOURS_RAW:
-        raise ValueError(
+        raise InvalidValueError(
             f"boost time {seconds} s is neither "
             f"0-{_BOOST_TIME_24_HOURS_RAW - 1} nor {BOOST_TIME_MAX}"
         )
@@ -58,7 +61,7 @@ def _boost_time_register(seconds: int) -> int:
 def _external_setpoint(celsius: float) -> float:
     """Check a setpoint against the range the library allows."""
     if not EXTERNAL_SETPOINT_MIN <= celsius <= EXTERNAL_SETPOINT_MAX:
-        raise ValueError(
+        raise InvalidValueError(
             f"external setpoint {celsius} °C is outside "
             f"{EXTERNAL_SETPOINT_MIN}-{EXTERNAL_SETPOINT_MAX}"
         )

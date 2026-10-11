@@ -5,7 +5,8 @@ from __future__ import annotations
 import pytest
 from modbus_connection.mock import MockModbusUnit
 
-from comfoconnect_pro_modbus import ComfoConnectPro, address
+from comfoconnect_pro_modbus import ComfoConnectPro
+from comfoconnect_pro_modbus.model import address
 
 
 def signed(value: int) -> int:

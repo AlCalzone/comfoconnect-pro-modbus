@@ -6,13 +6,7 @@ from .controls import (
     EXTERNAL_SETPOINT_MIN,
     Controls,
 )
-from .device import (
-    COMPONENTS,
-    READINGS,
-    SETTINGS,
-    ComfoConnectPro,
-    NoVentilationUnitError,
-)
+from .device import ComfoConnectPro, NoVentilationUnitError
 from .enums import (
     AlarmCode,
     ConnectionState,
@@ -20,7 +14,8 @@ from .enums import (
     TemperatureProfileMode,
     VentilationPreset,
 )
-from .model import UpdateReport, address
+from .errors import ComfoConnectProError, InvalidValueError
+from .model import UpdateReport
 from .sensors import CO2_ZONES, Sensors
 from .status import ALARM_SLOTS, Status
 
@@ -28,15 +23,14 @@ __all__ = [
     "ALARM_SLOTS",
     "BOOST_TIME_MAX",
     "CO2_ZONES",
-    "COMPONENTS",
     "EXTERNAL_SETPOINT_MAX",
     "EXTERNAL_SETPOINT_MIN",
-    "READINGS",
-    "SETTINGS",
     "AlarmCode",
     "ComfoConnectPro",
+    "ComfoConnectProError",
     "ConnectionState",
     "Controls",
+    "InvalidValueError",
     "NoVentilationUnitError",
     "Sensors",
     "Status",
@@ -44,5 +38,4 @@ __all__ = [
     "TemperatureProfileMode",
     "UpdateReport",
     "VentilationPreset",
-    "address",
 ]
