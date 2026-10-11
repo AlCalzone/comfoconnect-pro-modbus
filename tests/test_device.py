@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from enum import Enum, IntFlag
 from typing import Any, Literal
 
 import pytest
@@ -31,6 +32,14 @@ from comfoconnect_pro_modbus.model import address
 from .conftest import HOLDING, INPUT, seed
 
 GATEWAY_ERRORS = [GatewayPathUnavailableError(), GatewayTargetError()]
+
+
+class _Flag(IntFlag):
+    B = 2
+
+
+class _IntValued(int, Enum):
+    B = 2
 
 
 @pytest.fixture
@@ -85,7 +94,20 @@ async def test_detect_rejects_a_bad_state_after_one_read(
     assert caught.value.code == code
     assert f"connection state is {code} (" in str(caught.value)
     assert mock_modbus_unit.read_events == [ReadEvent("input", 0, 1)]
-    assert mock_modbus_unit.required_timeout is None
+    # The requirement stays behind, as async_detect() documents
+    assert mock_modbus_unit.required_timeout == 5
+
+
+async def test_detect_rechecks_the_state_in_the_status_read(
+    mock_modbus_unit: MockModbusUnit,
+) -> None:
+    seed(mock_modbus_unit)
+    states = iter([0, 50])
+    mock_modbus_unit.input[address(0x0001)] = lambda: next(states)
+    with pytest.raises(NoVentilationUnitError) as caught:
+        await ComfoConnectPro.async_detect(mock_modbus_unit)
+
+    assert caught.value.state is ConnectionState.NO_VENTILATION_UNIT
 
 
 @pytest.mark.parametrize("error", GATEWAY_ERRORS)
@@ -257,6 +279,9 @@ async def test_values_before_the_first_update(gateway: ComfoConnectPro) -> None:
         (lambda gateway: gateway.status.active_error(6), "no alarm slot 6"),
         (lambda gateway: gateway.sensors.co2(0), "no CO2 zone 0"),
         (lambda gateway: gateway.sensors.co2(9), "no CO2 zone 9"),
+        (lambda gateway: gateway.status.active_error(True), "is not an int"),
+        (lambda gateway: gateway.status.active_error(1.5), "is not an int"),
+        (lambda gateway: gateway.sensors.co2(2.0), "is not an int"),
     ],
 )
 async def test_index_out_of_range(
@@ -444,15 +469,41 @@ async def test_reset_errors(gateway: ComfoConnectPro, writes: list[WriteEvent]) 
     [
         *(
             ("async_write_boost_time", seconds)
-            for seconds in (-1, 65535, 86399, 86401, 3600.5, "600", True)
+            for seconds in (
+                -1,
+                65535,
+                86399,
+                86401,
+                3600.5,
+                "600",
+                True,
+                VentilationPreset.HIGH,
+            )
         ),
         *(
             ("async_write_external_setpoint", celsius)
-            for celsius in (-0.01, 40.01, float("nan"), 7000.0, True, "20")
+            for celsius in (
+                -0.01,
+                40.01,
+                float("nan"),
+                7000.0,
+                True,
+                "20",
+                VentilationPreset.HIGH,
+            )
         ),
         *(
             ("async_write_ventilation_preset", value)
-            for value in (4, -1, "high", True, 1.0, TemperatureProfile.COLD)
+            for value in (
+                4,
+                -1,
+                "high",
+                True,
+                1.0,
+                TemperatureProfile.COLD,
+                _Flag.B,
+                _IntValued.B,
+            )
         ),
         *(
             ("async_write_temperature_profile", value)

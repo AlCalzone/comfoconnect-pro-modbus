@@ -7,7 +7,7 @@ itself, so the component writes it and never reads it.
 from __future__ import annotations
 
 from collections.abc import Callable
-from enum import IntEnum
+from enum import Enum, IntEnum
 
 from modbus_connection.model import NumberField, coil, enum, gauge
 
@@ -27,7 +27,7 @@ def _member[E: IntEnum](enum_type: type[E]) -> Callable[[object], E]:
     """A write validator that accepts a member of ``enum_type`` or its number."""
 
     def _validate(value: object) -> E:
-        if isinstance(value, IntEnum) and not isinstance(value, enum_type):
+        if isinstance(value, Enum) and not isinstance(value, enum_type):
             raise InvalidValueError(f"{value!r} is not a {enum_type.__name__}")
         if isinstance(value, bool) or not isinstance(value, int):
             raise InvalidValueError(f"{value!r} is not a {enum_type.__name__}")
@@ -55,7 +55,7 @@ def _boost_time_register(seconds: float) -> int:
     """A boost duration as the register value that carries it."""
     if isinstance(seconds, float) and seconds.is_integer():
         seconds = int(seconds)
-    if isinstance(seconds, bool) or not isinstance(seconds, int):
+    if isinstance(seconds, bool | Enum) or not isinstance(seconds, int):
         raise InvalidValueError(
             f"boost time {seconds!r} is not a whole number of seconds"
         )
@@ -71,7 +71,7 @@ def _boost_time_register(seconds: float) -> int:
 
 def _external_setpoint(celsius: object) -> float:
     """Check a setpoint against the range the library allows."""
-    if isinstance(celsius, bool) or not isinstance(celsius, int | float):
+    if isinstance(celsius, bool | Enum) or not isinstance(celsius, int | float):
         raise InvalidValueError(f"external setpoint {celsius!r} is not a number")
     # A NaN fails both comparisons, so it is rejected here too.
     if not EXTERNAL_SETPOINT_MIN <= celsius <= EXTERNAL_SETPOINT_MAX:

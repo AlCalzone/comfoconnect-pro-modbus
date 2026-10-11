@@ -70,6 +70,8 @@ class Status(ConnectionStatus):
 
         Returns 0 for an empty slot and ``None`` before the first read.
         """
+        if isinstance(slot, bool) or not isinstance(slot, int):
+            raise InvalidValueError(f"alarm slot {slot!r} is not an int")
         if not 1 <= slot <= ALARM_SLOTS:
             raise InvalidValueError(f"no alarm slot {slot}")
         code: AlarmCode | int | None = getattr(self, f"active_error_{slot}")

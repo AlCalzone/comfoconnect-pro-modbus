@@ -57,7 +57,11 @@ class ComfoConnectPro(Device):
 
         Raises ``NoVentilationUnitError`` when the gateway reports a connection
         state other than OK, or refuses a read for lack of a path to the unit.
+        The timeout requirement stays on ``unit`` when detection fails.
         """
+        # Build the device first, so the timeout applies to the detection
+        # reads. Asking a live link for a longer timeout reconnects it.
+        device = cls(unit, timeout=timeout)
         link = ConnectionStatus(unit)
         try:
             await link.async_update(notify=False)
@@ -71,13 +75,15 @@ class ComfoConnectPro(Device):
         )
         if state is not ConnectionState.OK:
             raise NoVentilationUnitError(state, code=link.connection_code)
-        # Build the device only now, because it asks the shared unit for the
-        # timeout.
-        device = cls(unit, timeout=timeout)
         try:
             await device.status.async_update(notify=False)
         except GATEWAY_ERRORS as err:
             raise NoVentilationUnitError(state, unreachable=True) from err
+        status = device.status
+        if not status.is_connected:
+            raise NoVentilationUnitError(
+                status.connection_state, code=status.connection_code
+            )
         return device
 
     async def async_update_readings(self) -> UpdateReport:

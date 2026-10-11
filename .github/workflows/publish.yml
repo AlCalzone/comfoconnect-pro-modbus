@@ -3,15 +3,11 @@ name: Publish to PyPI
 on:
   release:
     types: [published]
+  # Run it manually from the release tag.
   workflow_dispatch:
-    inputs:
-      tag:
-        description: Existing release tag to build and publish (e.g. 0.1.0)
-        required: true
-        type: string
 
 env:
-  RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name }}
+  RELEASE_TAG: ${{ github.ref_name }}
 
 jobs:
   build:
@@ -21,6 +17,10 @@ jobs:
     steps:
       - name: Check the tag is a release version
         run: |
+          if [[ "$GITHUB_REF_TYPE" != "tag" ]]; then
+            echo "::error::Run this workflow from a release tag"
+            exit 1
+          fi
           if ! [[ "$RELEASE_TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+((a|b|rc)[0-9]+)?$ ]]; then
             echo "::error::Tag '$RELEASE_TAG' is not a version such as 0.1.0"
             exit 1
@@ -53,8 +53,8 @@ jobs:
 
   publish:
     needs: build
-    # A manual run must start from the tag, so a branch's copy of this file
-    # cannot reach the PyPI token.
+    # Publish only from a tag ref. A tag off main still runs its own copy of
+    # this file, so the pypi environment's tag rule must guard the token.
     if: github.ref_type == 'tag' || github.event_name == 'release'
     runs-on: ubuntu-latest
     environment: pypi
