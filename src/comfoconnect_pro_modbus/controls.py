@@ -103,6 +103,11 @@ class Controls(ComfoConnectComponent):
 
     A preset write alone overrides auto mode for 2 hours, after which the unit
     picks the speed again. Turn ``auto_mode`` off first to keep the preset.
+
+    The away function and a boost run on top of auto mode or a manual preset,
+    and leave ``auto_mode`` as it was. ``ventilation_preset`` reads ``AWAY``
+    while away is on and ``HIGH`` during a boost, and the unit returns to the
+    earlier mode when either ends.
     """
 
     coil_ranges = ((address(0x0006), address(0x0009)),)
