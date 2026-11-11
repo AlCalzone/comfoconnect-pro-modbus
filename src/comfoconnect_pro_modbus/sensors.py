@@ -17,7 +17,11 @@ class Sensors(ComfoConnectComponent):
 
     airflow = integer(address(0x0007), signed=False, unit="m³/h")
 
-    room_temperature = gauge(address(0x0008), 0.1, unit="°C")
+    # A unit without a room sensor reads 0 in both room registers. Real air
+    # never reads 0 % humidity, and a ventilated room never 0.0 °C, so 0 counts
+    # as no sensor.
+    room_temperature = gauge(address(0x0008), 0.1, unit="°C", nan=0)
+    """The room sensor's temperature, or ``None`` without a room sensor."""
     extract_temperature = gauge(address(0x0009), 0.1, unit="°C")
     """The air drawn from the rooms, as it enters the unit."""
     exhaust_temperature = gauge(address(0x000A), 0.1, unit="°C")
@@ -26,7 +30,8 @@ class Sensors(ComfoConnectComponent):
     supply_temperature = gauge(address(0x000C), 0.1, unit="°C")
     """The air blown into the rooms."""
 
-    room_humidity = integer(address(0x000D), signed=False, unit="%")
+    room_humidity = integer(address(0x000D), signed=False, unit="%", nan=0)
+    """The room sensor's humidity, or ``None`` without a room sensor."""
     extract_humidity = integer(address(0x000E), signed=False, unit="%")
     exhaust_humidity = integer(address(0x000F), signed=False, unit="%")
     outdoor_humidity = integer(address(0x0010), signed=False, unit="%")
