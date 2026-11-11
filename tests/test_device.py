@@ -247,27 +247,54 @@ async def test_controls(gateway: ComfoConnectPro) -> None:
     assert controls.ventilation_preset is VentilationPreset.MEDIUM
     assert controls.temperature_profile is TemperatureProfile.NORMAL
     assert controls.temperature_profile_mode is TemperatureProfileMode.ADAPTIVE
-    assert controls.external_setpoint == 22.0
-    assert controls.boost_time == 1800
+    assert controls.comfort_temperature == 22.0
+    assert controls.boost_remaining == 1800
     assert controls.auto_mode is True
     assert controls.boost is False
     assert controls.away_function is False
     assert controls.comfocool is True
 
 
-async def test_boost_time_of_a_day(mock_modbus_unit: MockModbusUnit) -> None:
+async def test_boost_of_a_day(mock_modbus_unit: MockModbusUnit) -> None:
     seed(mock_modbus_unit, holding={0x0005: 65535})
     gateway = ComfoConnectPro(mock_modbus_unit)
     await gateway.async_update()
 
-    assert gateway.controls.boost_time == 86400
+    assert gateway.controls.boost_remaining == 86400
+
+
+async def test_no_room_sensor(mock_modbus_unit: MockModbusUnit) -> None:
+    # A unit without a room sensor reads 0 in both room registers
+    seed(mock_modbus_unit, input_registers={**INPUT, 0x0008: 0, 0x000D: 0})
+    gateway = ComfoConnectPro(mock_modbus_unit)
+    await gateway.async_update()
+
+    assert gateway.sensors.room_temperature is None
+    assert gateway.sensors.room_humidity is None
+    assert gateway.sensors.extract_temperature == 21.8
+
+
+@pytest.mark.parametrize(
+    ("helper", "value"),
+    [("async_write_external_setpoint", 25.0), ("async_write_boost_time", 600)],
+)
+async def test_writes_leave_the_values_read_back(
+    gateway: ComfoConnectPro, helper: str, value: float
+) -> None:
+    # These registers read back the comfort temperature and the boost time
+    # left. A write sets neither.
+    await gateway.async_update()
+    await getattr(gateway.controls, helper)(value)
+
+    assert gateway.controls.comfort_temperature == 22.0
+    assert gateway.controls.boost_remaining == 1800
 
 
 async def test_values_before_the_first_update(gateway: ComfoConnectPro) -> None:
     assert gateway.status.connection_state is None
     assert gateway.status.active_error(1) is None
     assert gateway.status.active_alarms == ()
-    assert gateway.controls.boost_time is None
+    assert gateway.controls.boost_remaining is None
     assert gateway.sensors.co2(1) is None
     assert gateway.sensors.co2_zones == {}
 
@@ -328,7 +355,7 @@ async def test_reads_the_protocol_addresses(mock_modbus_unit: MockModbusUnit) ->
     assert gateway.sensors.airflow == 175
     assert gateway.sensors.filter_days_remaining == 23
     assert gateway.status.filter_dirty is True
-    assert gateway.controls.boost_time == 900
+    assert gateway.controls.boost_remaining == 900
     assert gateway.controls.comfocool is True
 
 

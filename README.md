@@ -64,14 +64,20 @@ Every value is `None` until the first update. Each update returns an `UpdateRepo
 
 - **No identity:** the gateway reports no serial number, model or firmware version.
 - **No off switch:** the unit cannot be turned off or put into standby over Modbus.
-- **Temperature profile:** `temperature_profile` applies only in the adaptive and fixed modes. `external_setpoint` applies only in the external setpoint mode.
-- **Boost time:** takes whole seconds from 0 to 65534, or exactly `BOOST_TIME_MAX` (86400) for 24 hours. Other values raise `InvalidValueError`.
+- **Presets and auto mode:** a preset write alone overrides auto mode for 2 hours, and `auto_mode` stays `True`. The unit then picks the speed again. Write `auto_mode` off first to keep the preset.
+- **Away and boost:** both run on top of auto mode or a manual preset. `auto_mode` stays as it was. While away is on, `ventilation_preset` reads `AWAY`. While a boost runs, it reads `HIGH`. When either ends, the unit returns to auto mode or the earlier preset.
+- **Temperature profile:** `temperature_profile` applies only in the adaptive and fixed modes. The external setpoint applies only in the external setpoint mode.
+- **Comfort temperature:** the external setpoint's register reads back the comfort temperature in effect, in every mode. `comfort_temperature` holds it. A write to `async_write_external_setpoint()` sets the external setpoint, which `comfort_temperature` shows only in the external setpoint mode.
+- **Boost time:** the boost time's register reads back the time left on a running boost, and 0 without one. `boost_remaining` holds it. `async_write_boost_time()` sets the length of the next boost, which nothing reads back, so write it before each boost. It takes whole seconds from 0 to 65534, or exactly `BOOST_TIME_MAX` (86400) for 24 hours. Other values raise `InvalidValueError`. Zehnder's app calls the boost the party timer.
 - **External setpoint:** takes 0 to 40 °C. The manual gives no range, so the library picks this one.
 - **CO₂ zones:** a zone that reads 0 counts as having no sensor.
+- **Room sensor:** without a room sensor, both room registers read 0. `room_temperature` and `room_humidity` are then `None`.
+- **ComfoCool:** `comfocool` reads `True` on a unit without a ComfoCool. It is a setting, not a sign that one is fitted.
 - **Unit-side changes:** the unit changes `boost`, `auto_mode` and `ventilation_preset` itself, for example when a boost ends. Poll `async_update_settings()` as often as the readings if you show them.
 - **Write retries:** every write sets an absolute value, so retrying one is safe. A `ModbusTimeoutError` on a write does not mean the gateway ignored it.
 - **Stalled link:** a poll can take several request timeouts before it raises.
-- **Testing:** built against the gateway's installation manual, document revision 140. It has not been tested on real hardware yet.
+- **Lost path to the unit:** the gateway can lose its Modbus path to the ventilation unit while Zehnder's app still reaches it. It then refuses every read, the connection state included, with Modbus exception 10 (gateway path unavailable). `async_detect()` raises `NoVentilationUnitError` with `state` `None`. Saving the gateway's settings, which restarts it, did not bring the path back in testing. Power cycling the ventilation unit did.
+- **Testing:** built against the gateway's installation manual, document revision 140. Tested on a ComfoConnect PRO with firmware 1.0.5 and a ComfoAir Q, without a room sensor, CO₂ sensors or a ComfoCool.
 
 ## API
 
@@ -104,6 +110,7 @@ The gateway and its ventilation unit, reached through a modbus-connection `Modbu
 - `airflow`: the airflow, in m³/h.
 - `room_temperature`, `extract_temperature`, `exhaust_temperature`, `outdoor_temperature`, `supply_temperature`: the air temperatures, in °C.
 - `room_humidity`, `extract_humidity`, `exhaust_humidity`, `outdoor_humidity`, `supply_humidity`: the air humidities, in %.
+  The room values are `None` without a room sensor.
 - `co2(zone)`: the CO₂ level in zone 1 to 8, in ppm.
 - `co2_zones`: the zones reporting a level, as `{zone: ppm}`.
 - `filter_days_remaining`: the time until the filters are due, in days.
@@ -113,21 +120,21 @@ The gateway and its ventilation unit, reached through a modbus-connection `Modbu
 - `ventilation_preset`: the fan speed, a `VentilationPreset`.
 - `auto_mode`: the unit picks the speed itself.
 - `boost`: the boost is running.
-- `boost_time`: how long a boost lasts, in seconds.
+- `boost_remaining`: the time left on a running boost, in seconds, or 0 without one.
 - `away_function`: the away function is on. It is separate from `VentilationPreset.AWAY`.
 - `comfocool`: ComfoCool may cool.
 - `temperature_profile`: a `TemperatureProfile`.
 - `temperature_profile_mode`: a `TemperatureProfileMode`.
-- `external_setpoint`: the comfort temperature for the external setpoint mode, in °C.
+- `comfort_temperature`: the comfort temperature in effect, in °C. In the external setpoint mode, the external setpoint.
 - `await async_write_ventilation_preset(preset)`: set the fan speed.
 - `await async_write_auto_mode(on)`: turn auto mode on or off.
 - `await async_write_boost(on)`: start or stop a boost.
-- `await async_write_boost_time(seconds)`: set how long a boost lasts, up to `BOOST_TIME_MAX`.
+- `await async_write_boost_time(seconds)`: set how long the next boost lasts, up to `BOOST_TIME_MAX`.
 - `await async_write_away_function(on)`: turn the away function on or off.
 - `await async_write_comfocool(on)`: allow or stop ComfoCool cooling.
 - `await async_write_temperature_profile(profile)`: set the temperature profile.
 - `await async_write_temperature_profile_mode(mode)`: set the temperature profile mode.
-- `await async_write_external_setpoint(celsius)`: set the external setpoint.
+- `await async_write_external_setpoint(celsius)`: set the external setpoint, which the unit follows in the external setpoint mode.
 - `await async_reset_errors()`: clear the alarms.
 
 ### Enums
@@ -160,5 +167,7 @@ uv run script/query.py /dev/ttyUSB0 --baudrate 19200 --parity E
 ```
 
 Add `--raw` to include the undecoded registers. A bug report about a wrong value needs them.
+
+If every read fails with "the gateway has no path to the ventilation unit" while Zehnder's app still works, power cycle the ventilation unit. See **Lost path to the unit** under Gotchas.
 
 The `comfoconnect_pro_modbus` logger reports at `DEBUG` the connection state `async_detect()` found and each component that failed to refresh during an update.

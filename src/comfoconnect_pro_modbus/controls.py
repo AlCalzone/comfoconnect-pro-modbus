@@ -2,6 +2,17 @@
 
 Coil 0x0001 resets the alarms. It acts on a write of ``True`` and resets
 itself, so the component writes it and never reads it.
+
+Holding registers 0x0004 and 0x0005 read back a different value than a write
+sets, as tested on firmware 1.0.5:
+
+- 0x0004 reads the comfort temperature in effect in every profile mode. A
+  write sets the external setpoint.
+- 0x0005 reads the time left on a running boost, or 0 without one. A write
+  sets the length of the next boost.
+
+``comfort_temperature`` and ``boost_remaining`` read these registers and are
+read-only. The write helpers write the registers directly.
 """
 
 from __future__ import annotations
@@ -17,6 +28,8 @@ from .model import ComfoConnectComponent, address
 
 BOOST_TIME_MAX = 86400
 """The longest boost, in seconds: 24 hours."""
+_EXTERNAL_SETPOINT_REGISTER = address(0x0004)
+_BOOST_TIME_REGISTER = address(0x0005)
 # The gateway takes this register value as 24 hours.
 _BOOST_TIME_24_HOURS_RAW = 65535
 EXTERNAL_SETPOINT_MIN = 0.0
@@ -89,6 +102,14 @@ class Controls(ComfoConnectComponent):
     ``ModbusTimeoutError`` on a write does not mean the gateway ignored it.
     The unit changes ``boost``, ``auto_mode`` and ``ventilation_preset`` on
     its own, for example when a boost ends.
+
+    A preset write alone overrides auto mode for 2 hours. Then the unit picks
+    the speed again. Turn ``auto_mode`` off first to keep the preset.
+
+    The away function and a boost leave ``auto_mode`` and the manual preset as
+    they were. While away is on, ``ventilation_preset`` reads ``AWAY``. During
+    a boost it reads ``HIGH``. When either ends, the unit returns to the
+    earlier mode.
     """
 
     coil_ranges = ((address(0x0006), address(0x0009)),)
@@ -105,18 +126,17 @@ class Controls(ComfoConnectComponent):
         TemperatureProfileMode,
         writable=_member(TemperatureProfileMode),
     )
-    external_setpoint = gauge(
-        address(0x0004), 0.1, signed=False, unit="°C", writable=_external_setpoint
+    comfort_temperature = gauge(
+        _EXTERNAL_SETPOINT_REGISTER, 0.1, signed=False, unit="°C"
     )
-    """Applies only in the external setpoint profile mode."""
-    boost_time: NumberField[int] = NumberField(
-        address(0x0005),
-        signed=False,
-        convert=_boost_seconds,
-        writable=_boost_time_register,
-        unit="s",
+    """The comfort temperature in effect, in every profile mode.
+
+    In the external setpoint mode it is the last external setpoint written.
+    """
+    boost_remaining: NumberField[int] = NumberField(
+        _BOOST_TIME_REGISTER, signed=False, convert=_boost_seconds, unit="s"
     )
-    """How long a boost lasts, in seconds."""
+    """The time left on a running boost, in seconds, or 0 without one."""
 
     auto_mode = coil(address(0x0006), writable=_bool)
     boost = coil(address(0x0007), writable=_bool)
@@ -141,15 +161,23 @@ class Controls(ComfoConnectComponent):
         await self.write("temperature_profile_mode", mode)
 
     async def async_write_external_setpoint(self, celsius: float) -> None:
-        """Set the comfort temperature for the external setpoint mode."""
-        await self.write("external_setpoint", celsius)
+        """Set the comfort temperature for the external setpoint mode.
+
+        ``comfort_temperature`` shows this value while the unit is in that mode.
+        """
+        tenths = round(_external_setpoint(celsius) * 10)
+        await self._unit.write_register(_EXTERNAL_SETPOINT_REGISTER, tenths)
 
     async def async_write_boost_time(self, seconds: float) -> None:
-        """Set how long a boost lasts, in whole seconds.
+        """Set how long the next boost lasts, in whole seconds.
 
         Takes up to 65534 seconds, or exactly ``BOOST_TIME_MAX``.
+        ``boost_remaining`` reads the same register and shows the time left on
+        a running boost. Write the duration before each boost to be sure of its
+        length.
         """
-        await self.write("boost_time", seconds)
+        raw = _boost_time_register(seconds)
+        await self._unit.write_register(_BOOST_TIME_REGISTER, raw)
 
     async def async_write_auto_mode(self, on: bool) -> None:
         """Let the unit pick the fan speed itself, or stop it."""
