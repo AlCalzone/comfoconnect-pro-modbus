@@ -281,8 +281,8 @@ async def test_no_room_sensor(mock_modbus_unit: MockModbusUnit) -> None:
 async def test_writes_leave_the_values_read_back(
     gateway: ComfoConnectPro, helper: str, value: float
 ) -> None:
-    # The registers read back the comfort temperature and the boost time left,
-    # which a write does not set
+    # These registers read back the comfort temperature and the boost time
+    # left. A write sets neither.
     await gateway.async_update()
     await getattr(gateway.controls, helper)(value)
 

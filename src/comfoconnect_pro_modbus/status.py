@@ -27,9 +27,9 @@ def _alarm_slot(slot: int) -> NumberField[AlarmCode | int]:
 class ConnectionStatus(ComfoConnectComponent):
     """Input register 0x0001 alone: whether the gateway reaches the unit.
 
-    The manual lists codes for a missing or unsupported unit. A gateway that
-    has lost its path to the unit refuses this read too, with Modbus exception
-    10, so ``async_detect()`` handles both.
+    The manual lists codes for a missing or unsupported unit. The gateway also
+    refuses this read with Modbus exception 10 when it has lost its path to the
+    unit. ``async_detect()`` handles both cases.
     """
 
     register_space = "input"

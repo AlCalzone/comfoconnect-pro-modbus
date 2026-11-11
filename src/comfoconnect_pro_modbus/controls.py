@@ -3,13 +3,16 @@
 Coil 0x0001 resets the alarms. It acts on a write of ``True`` and resets
 itself, so the component writes it and never reads it.
 
-Holding registers 0x0004 and 0x0005 read back something other than what a
-client writes to them, as tested on a gateway with firmware 1.0.5. 0x0004 reads
-the comfort temperature in effect, in every profile mode, while a write sets
-the external setpoint. 0x0005 reads the time left on a running boost, and 0
-without one, while a write sets the duration of the next boost. The component
-reads them as ``comfort_temperature`` and ``boost_remaining``, and writes them
-directly, so a write never stands in for the value read back.
+Holding registers 0x0004 and 0x0005 read back a different value than a write
+sets, as tested on firmware 1.0.5:
+
+- 0x0004 reads the comfort temperature in effect in every profile mode. A
+  write sets the external setpoint.
+- 0x0005 reads the time left on a running boost, or 0 without one. A write
+  sets the length of the next boost.
+
+``comfort_temperature`` and ``boost_remaining`` read these registers and are
+read-only. The write helpers write the registers directly.
 """
 
 from __future__ import annotations
@@ -25,7 +28,6 @@ from .model import ComfoConnectComponent, address
 
 BOOST_TIME_MAX = 86400
 """The longest boost, in seconds: 24 hours."""
-# The holding registers whose writes set something other than what they read.
 _EXTERNAL_SETPOINT_REGISTER = address(0x0004)
 _BOOST_TIME_REGISTER = address(0x0005)
 # The gateway takes this register value as 24 hours.
@@ -101,13 +103,13 @@ class Controls(ComfoConnectComponent):
     The unit changes ``boost``, ``auto_mode`` and ``ventilation_preset`` on
     its own, for example when a boost ends.
 
-    A preset write alone overrides auto mode for 2 hours, after which the unit
-    picks the speed again. Turn ``auto_mode`` off first to keep the preset.
+    A preset write alone overrides auto mode for 2 hours. Then the unit picks
+    the speed again. Turn ``auto_mode`` off first to keep the preset.
 
-    The away function and a boost run on top of auto mode or a manual preset,
-    and leave ``auto_mode`` as it was. ``ventilation_preset`` reads ``AWAY``
-    while away is on and ``HIGH`` during a boost, and the unit returns to the
-    earlier mode when either ends.
+    The away function and a boost leave ``auto_mode`` and the manual preset as
+    they were. While away is on, ``ventilation_preset`` reads ``AWAY``. During
+    a boost it reads ``HIGH``. When either ends, the unit returns to the
+    earlier mode.
     """
 
     coil_ranges = ((address(0x0006), address(0x0009)),)
@@ -161,8 +163,7 @@ class Controls(ComfoConnectComponent):
     async def async_write_external_setpoint(self, celsius: float) -> None:
         """Set the comfort temperature for the external setpoint mode.
 
-        It takes effect in that mode only. ``comfort_temperature`` reads it back
-        while the unit is in that mode.
+        ``comfort_temperature`` shows this value while the unit is in that mode.
         """
         tenths = round(_external_setpoint(celsius) * 10)
         await self._unit.write_register(_EXTERNAL_SETPOINT_REGISTER, tenths)
@@ -170,9 +171,10 @@ class Controls(ComfoConnectComponent):
     async def async_write_boost_time(self, seconds: float) -> None:
         """Set how long the next boost lasts, in whole seconds.
 
-        Takes up to 65534 seconds, or exactly ``BOOST_TIME_MAX``. The register
-        reads back the time left on a running boost, not this duration, so
-        write it before each boost to be sure of the length.
+        Takes up to 65534 seconds, or exactly ``BOOST_TIME_MAX``.
+        ``boost_remaining`` reads the same register and shows the time left on
+        a running boost. Write the duration before each boost to be sure of its
+        length.
         """
         raw = _boost_time_register(seconds)
         await self._unit.write_register(_BOOST_TIME_REGISTER, raw)
